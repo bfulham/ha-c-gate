@@ -6,7 +6,7 @@ import sqlite3
 from pathlib import Path
 import zipfile
 
-from project import parse_project_path
+from project import classify_group, parse_project_path
 
 
 XML = b"""<?xml version='1.0'?>
@@ -71,3 +71,9 @@ def test_parse_modern_cbz(tmp_path: Path) -> None:
     assert project["source_format"] == "sqlite"
     assert project["db_version"] == "2.3"
     assert project["networks"][0]["applications"][0]["groups"][0]["name"] == "Hall Light"
+
+
+def test_group_classification_uses_groups_for_sensor_values() -> None:
+    assert classify_group("Hall Motion", relay=False, output_assigned=False) == "binary_sensor"
+    assert classify_group("Hall Light Level", relay=False, output_assigned=False) == "sensor"
+    assert classify_group("Hall Light Level", relay=False, output_assigned=True) == "light"

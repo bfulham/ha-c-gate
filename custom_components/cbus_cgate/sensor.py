@@ -42,8 +42,9 @@ from .const import (
     UNIT_CODE_WATT_HOURS,
     UNIT_CODE_WATTS,
 )
-from .entity import CbusGroupEntity, sensors_device_info
-from .runtime import CbusCgateRuntime, MeasurementDefinition
+from .entity import CbusGroupEntity, application_device_info
+from .project import is_light_level_group_name
+from .runtime import CbusCgateRuntime, GroupDefinition, MeasurementDefinition
 
 PARALLEL_UPDATES = 0
 
@@ -72,6 +73,11 @@ class CbusGroupSensor(CbusGroupEntity, SensorEntity):
 
     _attr_native_unit_of_measurement = "%"
     _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, runtime: CbusCgateRuntime, definition: GroupDefinition) -> None:
+        super().__init__(runtime, definition)
+        if is_light_level_group_name(self.group["name"]):
+            self._attr_icon = "mdi:brightness-percent"
 
     @property
     def native_value(self) -> float | None:
@@ -127,7 +133,9 @@ class CbusMeasurementSensor(SensorEntity):
             f"d{self.key[2]}:c{self.key[3]}"
         )
         self._attr_name = self.measurement["name"]
-        self._attr_device_info = sensors_device_info(runtime, self.network)
+        self._attr_device_info = application_device_info(
+            runtime, self.network, self.application
+        )
         self._unsubscribe = None
 
     @property

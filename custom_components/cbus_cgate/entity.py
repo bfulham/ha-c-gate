@@ -19,16 +19,13 @@ def hub_identifier(runtime: CbusCgateRuntime, network: int) -> tuple[str, str]:
     return DOMAIN, f"{runtime.installation_id}:hub:{network}"
 
 
-def lights_identifier(runtime: CbusCgateRuntime, network: int) -> tuple[str, str]:
-    return DOMAIN, f"{runtime.installation_id}:hub:{network}:lights"
-
-
-def sensors_identifier(runtime: CbusCgateRuntime, network: int) -> tuple[str, str]:
-    return DOMAIN, f"{runtime.installation_id}:hub:{network}:sensors"
-
-
-def unit_identifier(runtime: CbusCgateRuntime, network: int, unit: int) -> tuple[str, str]:
-    return DOMAIN, f"{runtime.installation_id}:hub:{network}:unit:{unit}"
+def application_identifier(
+    runtime: CbusCgateRuntime, network: int, application: int
+) -> tuple[str, str]:
+    return (
+        DOMAIN,
+        f"{runtime.installation_id}:hub:{network}:application:{application}",
+    )
 
 
 def server_device_info(runtime: CbusCgateRuntime) -> DeviceInfo:
@@ -52,37 +49,20 @@ def hub_device_info(runtime: CbusCgateRuntime, network: dict[str, Any]) -> Devic
     )
 
 
-def lights_device_info(runtime: CbusCgateRuntime, network: dict[str, Any]) -> DeviceInfo:
-    return DeviceInfo(
-        identifiers={lights_identifier(runtime, network["address"])},
-        name=f"{network['name']} Lights",
-        manufacturer="Schneider Electric / Clipsal",
-        model="C-Bus lighting groups",
-        via_device=hub_identifier(runtime, network["address"]),
-    )
-
-
-def sensors_device_info(runtime: CbusCgateRuntime, network: dict[str, Any]) -> DeviceInfo:
-    return DeviceInfo(
-        identifiers={sensors_identifier(runtime, network["address"])},
-        name=f"{network['name']} Sensors",
-        manufacturer="Schneider Electric / Clipsal",
-        model="C-Bus sensor groups",
-        via_device=hub_identifier(runtime, network["address"]),
-    )
-
-
-def unit_device_info(
+def application_device_info(
     runtime: CbusCgateRuntime,
     network: dict[str, Any],
-    unit: dict[str, Any],
+    application: dict[str, Any],
 ) -> DeviceInfo:
     return DeviceInfo(
-        identifiers={unit_identifier(runtime, network["address"], unit["address"])},
-        name=unit["name"],
+        identifiers={
+            application_identifier(
+                runtime, network["address"], application["address"]
+            )
+        },
+        name=f"{network['name']} — {application['name']}",
         manufacturer="Schneider Electric / Clipsal",
-        model=unit.get("catalog_number") or unit.get("unit_type") or "C-Bus sensor",
-        sw_version=unit.get("firmware_version") or None,
+        model=f"C-Bus application {application['address']}",
         via_device=hub_identifier(runtime, network["address"]),
     )
 
@@ -107,10 +87,9 @@ class CbusGroupEntity(Entity):
             f"{runtime.installation_id}:n{self.key[0]}:a{self.key[1]}:g{self.key[2]}"
         )
         self._attr_name = self.group["name"]
-        if definition.entity_type in {"light", "switch", "cover"}:
-            self._attr_device_info = lights_device_info(runtime, self.network)
-        else:
-            self._attr_device_info = sensors_device_info(runtime, self.network)
+        self._attr_device_info = application_device_info(
+            runtime, self.network, self.application
+        )
         self._unsubscribe = None
 
     @property

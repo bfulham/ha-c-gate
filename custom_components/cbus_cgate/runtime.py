@@ -49,11 +49,12 @@ from .const import (
     TYPE_IGNORE,
 )
 
+from .project import classify_group
+
 _LOGGER = logging.getLogger(__name__)
 
 GroupKey = tuple[int, int, int]
 MeasurementKey = tuple[int, int, int, int]
-MotionKey = tuple[int, int]
 
 
 @dataclass(slots=True)
@@ -104,13 +105,6 @@ class MeasurementDefinition:
     network: dict[str, Any]
     application: dict[str, Any]
     measurement: dict[str, Any]
-
-
-@dataclass(slots=True, frozen=True)
-class MotionDefinition:
-    network: dict[str, Any]
-    unit: dict[str, Any]
-    mappings: tuple[tuple[int, int], ...]
 
 
 class EndpointManager:
@@ -415,11 +409,9 @@ class CbusCgateRuntime:
         )
         self.group_states: defaultdict[GroupKey, GroupState] = defaultdict(GroupState)
         self.measurement_states: defaultdict[MeasurementKey, MeasurementState] = defaultdict(MeasurementState)
-        self.motion_states: defaultdict[MotionKey, bool] = defaultdict(bool)
         self.hub_states: defaultdict[int, HubState] = defaultdict(HubState)
         self._group_callbacks: defaultdict[GroupKey, list[Callable[[], None]]] = defaultdict(list)
         self._measurement_callbacks: defaultdict[MeasurementKey, list[Callable[[], None]]] = defaultdict(list)
-        self._motion_callbacks: defaultdict[MotionKey, list[Callable[[], None]]] = defaultdict(list)
         self._hub_callbacks: defaultdict[int, list[Callable[[], None]]] = defaultdict(list)
         self.managers: list[EndpointManager] = []
         self.manager_by_network: dict[int, EndpointManager] = {}
@@ -440,7 +432,16 @@ class CbusCgateRuntime:
 
         self.group_definitions = self._build_group_definitions()
         self.measurement_definitions = self._build_measurement_definitions()
-        self.motion_definitions = self._build_motion_definitions()
+        active_application_keys = {
+            (definition.network["address"], definition.application["address"])
+            for definition in (*self.group_definitions, *self.measurement_definitions)
+        }
+        self.application_definitions = [
+            (network, application)
+            for network in self.project["networks"]
+            for application in network["applications"]
+            if (network["address"], application["address"]) in active_application_keys
+        ]
 
     def _hub_connections(self) -> dict[int, dict[str, Any]]:
         defaults = self.entry.data[CONF_HUB_CONNECTIONS]
@@ -456,12 +457,6 @@ class CbusCgateRuntime:
 
     def _build_group_definitions(self) -> list[GroupDefinition]:
         result: list[GroupDefinition] = []
-        motion_groups = {
-            (network["address"], mapping["application"], mapping["group"])
-            for network in self.project["networks"]
-            for unit in network.get("units", [])
-            for mapping in unit.get("motion_groups", [])
-        }
         for network in self.project["networks"]:
             for application in network["applications"]:
                 for group in application["groups"]:
@@ -470,9 +465,6 @@ class CbusCgateRuntime:
                     key = (network["address"], application["address"], group["address"])
                     entity_type = self.effective_entity_type(key, group)
                     if entity_type == TYPE_IGNORE:
-                        continue
-                    # Dedicated physical PIR entities are created separately.
-                    if key in motion_groups and entity_type == "binary_sensor":
                         continue
                     result.append(GroupDefinition(network, application, group, entity_type))
         return result
@@ -490,21 +482,6 @@ class CbusCgateRuntime:
                     result.append(MeasurementDefinition(network, application, measurement))
         return result
 
-    def _build_motion_definitions(self) -> list[MotionDefinition]:
-        result: list[MotionDefinition] = []
-        for network in self.project["networks"]:
-            for unit in network.get("units", []):
-                mappings = tuple(
-                    (mapping["application"], mapping["group"])
-                    for mapping in unit.get("motion_groups", [])
-                    if self.effective_application_type(
-                        network["address"], mapping["application"]
-                    ) in {TYPE_AUTO, "binary_sensor"}
-                )
-                if unit.get("supports_motion") and mappings:
-                    result.append(MotionDefinition(network, unit, mappings))
-        return result
-
     def effective_application_type(self, network: int, application: int) -> str:
         return self.application_overrides.get(
             f"{network}:{application}",
@@ -517,7 +494,11 @@ class CbusCgateRuntime:
             return override
         mapping = self.effective_application_type(key[0], key[1])
         if mapping == TYPE_AUTO:
-            return group.get("suggested_platform", "light")
+            return classify_group(
+                group["name"],
+                bool(group.get("relay")),
+                bool(group.get("output_assigned")),
+            )
         return mapping
 
     async def start(self) -> None:
@@ -594,22 +575,6 @@ class CbusCgateRuntime:
         for callback_fn in tuple(self._group_callbacks[key]):
             callback_fn()
 
-        for definition in self.motion_definitions:
-            if definition.network["address"] != key[0] or (key[1], key[2]) not in definition.mappings:
-                continue
-            unit_address = definition.unit["address"]
-            # Software-originated commands use source unit 0 and must not be
-            # interpreted as physical motion. If C-Gate omits source-unit data,
-            # update all units mapped to the dedicated motion group.
-            if source_unit == 0:
-                continue
-            if source_unit is not None and source_unit != unit_address:
-                continue
-            motion_key = (key[0], unit_address)
-            self.motion_states[motion_key] = state.level > 0
-            for callback_fn in tuple(self._motion_callbacks[motion_key]):
-                callback_fn()
-
     def update_measurement(self, event: MeasurementEvent) -> None:
         key = (event.network, event.application, event.device, event.channel)
         state = self.measurement_states[key]
@@ -647,11 +612,6 @@ class CbusCgateRuntime:
     ) -> Callable[[], None]:
         self._measurement_callbacks[key].append(cb)
         return lambda: self._measurement_callbacks[key].remove(cb)
-
-    @callback
-    def subscribe_motion(self, key: MotionKey, cb: Callable[[], None]) -> Callable[[], None]:
-        self._motion_callbacks[key].append(cb)
-        return lambda: self._motion_callbacks[key].remove(cb)
 
     @callback
     def subscribe_hub(self, network: int, cb: Callable[[], None]) -> Callable[[], None]:

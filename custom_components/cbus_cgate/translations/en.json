@@ -77,7 +77,7 @@
       },
       "applications": {
         "title": "Application mappings",
-        "description": "Choose a network application to map to a Home Assistant entity type.",
+        "description": "Choose a network application to map to a Home Assistant entity type. Each populated application is shown as its own Home Assistant device.",
         "data": {
           "application": "Application"
         }
@@ -120,7 +120,7 @@
   "selector": {
     "entity_type": {
       "options": {
-        "auto": "Automatic (motion/relay/dimmer inference)",
+        "auto": "Automatic (motion/light-level/relay/dimmer inference)",
         "light": "Light",
         "switch": "Switch",
         "binary_sensor": "Binary sensor",

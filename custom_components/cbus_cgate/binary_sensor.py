@@ -11,8 +11,9 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
-from .entity import CbusGroupEntity, hub_device_info, unit_device_info
-from .runtime import CbusCgateRuntime, MotionDefinition
+from .entity import CbusGroupEntity, hub_device_info
+from .project import is_motion_group_name
+from .runtime import CbusCgateRuntime, GroupDefinition
 
 PARALLEL_UPDATES = 0
 
@@ -29,7 +30,6 @@ async def async_setup_entry(
         for definition in runtime.group_definitions
         if definition.entity_type == "binary_sensor"
     )
-    entities.extend(CbusMotionSensor(runtime, definition) for definition in runtime.motion_definitions)
     entities.extend(
         CbusHubConnectivity(runtime, network) for network in runtime.project["networks"]
     )
@@ -37,58 +37,17 @@ async def async_setup_entry(
 
 
 class CbusGroupBinarySensor(CbusGroupEntity, BinarySensorEntity):
-    """A generic C-Bus group exposed as a binary sensor."""
+    """A C-Bus group exposed as a binary sensor."""
+
+    def __init__(self, runtime: CbusCgateRuntime, definition: GroupDefinition) -> None:
+        super().__init__(runtime, definition)
+        if is_motion_group_name(self.group["name"]):
+            self._attr_device_class = BinarySensorDeviceClass.MOTION
 
     @property
     def is_on(self) -> bool | None:
         level = self.runtime.group_states[self.key].level
         return None if level is None else level > 0
-
-
-class CbusMotionSensor(BinarySensorEntity):
-    """A physical C-Bus multisensor motion entity."""
-
-    _attr_has_entity_name = True
-    _attr_name = "Motion"
-    _attr_device_class = BinarySensorDeviceClass.MOTION
-
-    def __init__(self, runtime: CbusCgateRuntime, definition: MotionDefinition) -> None:
-        self.runtime = runtime
-        self.definition = definition
-        self.network = definition.network
-        self.unit = definition.unit
-        self.key = (self.network["address"], self.unit["address"])
-        self._attr_unique_id = (
-            f"{runtime.installation_id}:n{self.key[0]}:u{self.key[1]}:motion"
-        )
-        self._attr_device_info = unit_device_info(runtime, self.network, self.unit)
-        self._unsubscribe = None
-
-    @property
-    def is_on(self) -> bool:
-        return self.runtime.motion_states[self.key]
-
-    @property
-    def available(self) -> bool:
-        return self.runtime.hub_states[self.key[0]].connected
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        return {
-            "cbus_network": self.key[0],
-            "cbus_unit": self.key[1],
-            "source_groups": [f"{app}/{group}" for app, group in self.definition.mappings],
-        }
-
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        self._unsubscribe = self.runtime.subscribe_motion(self.key, self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        if self._unsubscribe is not None:
-            self._unsubscribe()
-            self._unsubscribe = None
-        await super().async_will_remove_from_hass()
 
 
 class CbusHubConnectivity(BinarySensorEntity):

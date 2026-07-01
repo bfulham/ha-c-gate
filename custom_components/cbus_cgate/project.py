@@ -27,6 +27,12 @@ ILLUMINANCE_CATALOG_NUMBERS = {"5753L", "5753PEIRL", "5031PE"}
 MOTION_UNIT_TYPES = {"SENPIRIB"}
 MOTION_CATALOG_NUMBERS = {"5753L", "5753PEIRL"}
 _MOTION_NAME_TOKENS = ("motion", "occupancy", "pir")
+_LIGHT_LEVEL_NAME_TOKENS = (
+    "light level",
+    "ambient light",
+    "illuminance",
+    "lux",
+)
 _INTERNAL_PATTERNS = (
     re.compile(r"^z", re.IGNORECASE),
     re.compile(r"^group\s+\d+$", re.IGNORECASE),
@@ -105,9 +111,17 @@ def is_motion_group_name(name: str) -> bool:
     return any(token in lower for token in _MOTION_NAME_TOKENS)
 
 
+def is_light_level_group_name(name: str) -> bool:
+    """Return whether a tag explicitly describes an ambient light level."""
+    lower = name.casefold()
+    return any(token in lower for token in _LIGHT_LEVEL_NAME_TOKENS)
+
+
 def classify_group(name: str, relay: bool, output_assigned: bool) -> str:
     """Infer a conservative default platform for a group."""
     lower = name.casefold()
+    if is_light_level_group_name(name) and not output_assigned:
+        return "sensor"
     if is_motion_group_name(name) and "light" not in lower and not output_assigned:
         return "binary_sensor"
     if relay or any(

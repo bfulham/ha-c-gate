@@ -49,9 +49,9 @@ async def async_get_config_entry_diagnostics(
             for network, state in runtime.hub_states.items()
         },
         "entities": {
+            "application_devices": len(runtime.application_definitions),
             "groups": len(runtime.group_definitions),
             "measurements": len(runtime.measurement_definitions),
-            "motion_units": len(runtime.motion_definitions),
         },
         "endpoint_count": len(runtime.managers),
     }

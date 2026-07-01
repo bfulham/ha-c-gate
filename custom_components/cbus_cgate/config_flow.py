@@ -8,10 +8,17 @@ from typing import Any
 from uuid import uuid4
 
 import voluptuous as vol
-
 from homeassistant.components.file_upload import process_uploaded_file
+from homeassistant.components.hassio import (
+    HassioNotReadyError,
+    SupervisorError,
+    get_addons_info,
+    get_addons_list,
+    get_supervisor_client,
+)
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.core import callback
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     BooleanSelector,
     FileSelector,
@@ -27,6 +34,14 @@ from homeassistant.helpers.selector import (
     TextSelectorType,
 )
 
+from .addon import (
+    AddonProjectError,
+    DetectedCgateAddon,
+    addon_info_to_dict,
+    async_fetch_addon_project_backup,
+    detect_cgate_addons,
+    is_cgate_addon,
+)
 from .client import (
     CgateEndpoint,
     CgateError,
@@ -34,6 +49,7 @@ from .client import (
     async_validate_endpoint,
 )
 from .const import (
+    CONF_ADDON_SLUG,
     CONF_APPLICATION,
     CONF_APPLICATION_MAPPINGS,
     CONF_APPLICATION_OVERRIDES,
@@ -73,13 +89,13 @@ from .const import (
 )
 from .project import (
     ProjectError,
+    parse_project_archive_bytes,
     parse_project_bytes,
     parse_project_path,
     project_diff,
     project_summary,
 )
 from .storage import async_load_project, async_save_project
-
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -108,24 +124,64 @@ def _connection_schema(defaults: dict[str, Any], *, include_project: bool = Fals
             vol.Required(CONF_HOST, default=defaults[CONF_HOST]): TextSelector(
                 TextSelectorConfig(type=TextSelectorType.TEXT)
             ),
-            vol.Required(
-                CONF_COMMAND_PORT, default=defaults[CONF_COMMAND_PORT]
-            ): _port_selector(DEFAULT_COMMAND_PORT),
-            vol.Required(
-                CONF_EVENT_PORT, default=defaults[CONF_EVENT_PORT]
-            ): _port_selector(DEFAULT_EVENT_PORT),
-            vol.Required(
-                CONF_STATUS_PORT, default=defaults[CONF_STATUS_PORT]
-            ): _port_selector(DEFAULT_STATUS_PORT),
-            vol.Required(
-                CONF_CONFIG_PORT, default=defaults[CONF_CONFIG_PORT]
-            ): _port_selector(DEFAULT_CONFIG_PORT),
-            vol.Required(
-                CONF_AUTO_OPEN, default=defaults[CONF_AUTO_OPEN]
-            ): BooleanSelector(),
+            vol.Required(CONF_COMMAND_PORT, default=defaults[CONF_COMMAND_PORT]): _port_selector(
+                DEFAULT_COMMAND_PORT
+            ),
+            vol.Required(CONF_EVENT_PORT, default=defaults[CONF_EVENT_PORT]): _port_selector(
+                DEFAULT_EVENT_PORT
+            ),
+            vol.Required(CONF_STATUS_PORT, default=defaults[CONF_STATUS_PORT]): _port_selector(
+                DEFAULT_STATUS_PORT
+            ),
+            vol.Required(CONF_CONFIG_PORT, default=defaults[CONF_CONFIG_PORT]): _port_selector(
+                DEFAULT_CONFIG_PORT
+            ),
+            vol.Required(CONF_AUTO_OPEN, default=defaults[CONF_AUTO_OPEN]): BooleanSelector(),
         }
     )
     return vol.Schema(fields)
+
+
+def _addon_schema(
+    addons: list[DetectedCgateAddon],
+    *,
+    default_project: str = "",
+) -> vol.Schema:
+    """Build a form for selecting a detected C-Gate add-on."""
+    first = addons[0]
+    project_name = default_project or first.project_name
+    addon_options = [
+        {
+            "value": addon.slug,
+            "label": f"{addon.name} ({addon.slug})",
+        }
+        for addon in addons
+    ]
+    return vol.Schema(
+        {
+            vol.Required(CONF_ADDON_SLUG, default=first.slug): SelectSelector(
+                SelectSelectorConfig(
+                    options=addon_options,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Optional(CONF_PROJECT_NAME, default=project_name): TextSelector(
+                TextSelectorConfig(type=TextSelectorType.TEXT)
+            ),
+        }
+    )
+
+
+def _connection_for_addon(addon: DetectedCgateAddon) -> dict[str, Any]:
+    """Return the Supervisor-network endpoint for a detected add-on."""
+    return {
+        CONF_HOST: addon.host,
+        CONF_COMMAND_PORT: DEFAULT_COMMAND_PORT,
+        CONF_EVENT_PORT: DEFAULT_EVENT_PORT,
+        CONF_STATUS_PORT: DEFAULT_STATUS_PORT,
+        CONF_CONFIG_PORT: DEFAULT_CONFIG_PORT,
+        CONF_AUTO_OPEN: DEFAULT_AUTO_OPEN,
+    }
 
 
 def _entity_type_selector() -> SelectSelector:
@@ -139,9 +195,7 @@ def _entity_type_selector() -> SelectSelector:
 
 
 def _port_selector(default: int) -> NumberSelector:
-    return NumberSelector(
-        NumberSelectorConfig(min=0, max=65535, mode=NumberSelectorMode.BOX)
-    )
+    return NumberSelector(NumberSelectorConfig(min=0, max=65535, mode=NumberSelectorMode.BOX))
 
 
 class CbusCgateConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -155,6 +209,8 @@ class CbusCgateConfigFlow(ConfigFlow, domain=DOMAIN):
         self._connection: dict[str, Any] = {}
         self._connection_error: str | None = None
         self._old_project: dict[str, Any] | None = None
+        self._detected_addons: list[DetectedCgateAddon] | None = None
+        self._reconfigure_connection: dict[str, Any] | None = None
 
     @staticmethod
     @callback
@@ -165,13 +221,142 @@ class CbusCgateConfigFlow(ConfigFlow, domain=DOMAIN):
         with process_uploaded_file(self.hass, upload_id) as file_path:
             return parse_project_path(Path(file_path))
 
-    async def async_step_user(
+    async def _async_detect_addons(self, *, refresh: bool = False) -> list[DetectedCgateAddon]:
+        """Return running companion add-ons using cache then the Supervisor API."""
+        if self._detected_addons is not None and not refresh:
+            return self._detected_addons
+
+        addons_info: dict[str, dict[str, Any] | Any | None] = {}
+        try:
+            addons_info.update(get_addons_info(self.hass))
+        except (HassioNotReadyError, KeyError):
+            pass
+
+        # The legacy cache may not be populated when a config flow opens. Query
+        # Supervisor directly so add-on discovery is reliable at first setup.
+        try:
+            supervisor = get_supervisor_client(self.hass)
+            installed = await supervisor.addons.list()
+            for item in installed:
+                summary = addon_info_to_dict(item)
+                slug = str(summary.get("slug") or getattr(item, "slug", "")).strip()
+                if not slug or not is_cgate_addon(slug, summary):
+                    continue
+                try:
+                    complete = addon_info_to_dict(await supervisor.addons.addon_info(slug))
+                except SupervisorError as err:
+                    _LOGGER.debug("Unable to read add-on details for %s: %s", slug, err)
+                    complete = {}
+                addons_info[slug] = {**summary, **complete}
+        except (SupervisorError, HassioNotReadyError, KeyError, AttributeError) as err:
+            _LOGGER.debug("Supervisor add-on discovery is not available: %s", err)
+            # Some HA versions populate the add-on list before detailed info.
+            try:
+                for item in get_addons_list(self.hass):
+                    info = addon_info_to_dict(item)
+                    slug = str(info.get("slug") or "").strip()
+                    if slug:
+                        addons_info.setdefault(slug, info)
+            except (HassioNotReadyError, KeyError):
+                pass
+
+        self._detected_addons = detect_cgate_addons(addons_info)
+        return self._detected_addons
+
+    async def _async_addon_by_slug(self, slug: str) -> DetectedCgateAddon | None:
+        return next(
+            (
+                addon
+                for addon in await self._async_detect_addons(refresh=True)
+                if addon.slug == slug
+            ),
+            None,
+        )
+
+    async def _async_fetch_addon_project(
+        self,
+        addon: DetectedCgateAddon,
+    ) -> dict[str, Any]:
+        """Download and parse the add-on's real SQLite/XML project backup."""
+        raw = await async_fetch_addon_project_backup(async_get_clientsession(self.hass), addon)
+        return await self.hass.async_add_executor_job(
+            parse_project_archive_bytes,
+            raw,
+            f"{addon.name} current backup.cbz",
+        )
+
+    async def _async_fetch_project(
+        self,
+        project_name: str,
+        connection: dict[str, Any],
+        source_name: str,
+    ) -> dict[str, Any]:
+        """Fetch and parse a project using one normalised C-Gate connection."""
+        endpoint = CgateEndpoint(
+            host=connection[CONF_HOST],
+            command_port=connection[CONF_COMMAND_PORT],
+            event_port=connection[CONF_EVENT_PORT],
+            status_port=connection[CONF_STATUS_PORT],
+            config_port=connection[CONF_CONFIG_PORT],
+            project=project_name,
+        )
+        raw = await async_fetch_project_xml(endpoint)
+        return await self.hass.async_add_executor_job(
+            parse_project_bytes,
+            raw,
+            source_name,
+            "xml",
+        )
+
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Choose whether to fetch the project from C-Gate or upload it."""
+        menu_options = ["fetch_project", "upload_project"]
+        if await self._async_detect_addons(refresh=True):
+            menu_options.insert(0, "addon_project")
+        return self.async_show_menu(step_id="user", menu_options=menu_options)
+
+    async def async_step_addon_project(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Choose whether to fetch the project from C-Gate or upload it."""
-        return self.async_show_menu(
-            step_id="user",
-            menu_options=["fetch_project", "upload_project"],
+        """Import from a running C-Gate Server add-on detected by Supervisor."""
+        addons = await self._async_detect_addons(refresh=True)
+        if not addons:
+            return self.async_abort(reason="addon_not_found")
+
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            addon = await self._async_addon_by_slug(str(user_input[CONF_ADDON_SLUG]))
+            if addon is None:
+                errors["base"] = "addon_not_available"
+            else:
+                expected_project = str(user_input.get(CONF_PROJECT_NAME, "")).strip()
+                self._connection = _connection_for_addon(addon)
+                try:
+                    self._project = await self._async_fetch_addon_project(addon)
+                    if (
+                        expected_project
+                        and self._project["project_name"].casefold() != expected_project.casefold()
+                    ):
+                        raise ProjectError(
+                            f"The add-on backup contains {self._project['project_name']}, "
+                            f"not {expected_project}"
+                        )
+                except AddonProjectError as err:
+                    _LOGGER.warning("Unable to download Toolkit backup from add-on: %s", err)
+                    errors["base"] = "cannot_fetch_project"
+                except (OSError, ProjectError, ValueError) as err:
+                    _LOGGER.warning("C-Gate add-on returned an invalid Toolkit project: %s", err)
+                    errors["base"] = "invalid_fetched_project"
+                else:
+                    return await self.async_step_confirm()
+
+        return self.async_show_form(
+            step_id="addon_project",
+            data_schema=_addon_schema(addons),
+            errors=errors,
+            description_placeholders={
+                "addon_count": str(len(addons)),
+            },
         )
 
     async def async_step_fetch_project(
@@ -182,21 +367,11 @@ class CbusCgateConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             project_name = str(user_input[CONF_PROJECT_NAME]).strip()
             self._connection = _connection_from_input(user_input)
-            endpoint = CgateEndpoint(
-                host=self._connection[CONF_HOST],
-                command_port=self._connection[CONF_COMMAND_PORT],
-                event_port=self._connection[CONF_EVENT_PORT],
-                status_port=self._connection[CONF_STATUS_PORT],
-                config_port=self._connection[CONF_CONFIG_PORT],
-                project=project_name,
-            )
             try:
-                raw = await async_fetch_project_xml(endpoint)
-                self._project = await self.hass.async_add_executor_job(
-                    parse_project_bytes,
-                    raw,
+                self._project = await self._async_fetch_project(
+                    project_name,
+                    self._connection,
                     f"{project_name}.xml (fetched from C-Gate)",
-                    "xml",
                 )
             except CgateError as err:
                 _LOGGER.warning("Unable to fetch Toolkit project from C-Gate: %s", err)
@@ -299,7 +474,9 @@ class CbusCgateConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema(
                 {vol.Required(CONF_CONTINUE_OFFLINE, default=True): BooleanSelector()}
             ),
-            description_placeholders={"connection_error": self._connection_error or "Unknown error"},
+            description_placeholders={
+                "connection_error": self._connection_error or "Unknown error"
+            },
         )
 
     async def async_step_confirm(
@@ -327,9 +504,7 @@ class CbusCgateConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_PROJECT_HASH: self._project["source_sha256"],
                     CONF_INSTALLATION_ID: uuid4().hex,
                     CONF_HUB_CONNECTIONS: connection_by_hub,
-                    CONF_APPLICATION_MAPPINGS: self._project[
-                        "default_application_mappings"
-                    ],
+                    CONF_APPLICATION_MAPPINGS: self._project["default_application_mappings"],
                     CONF_APPLICATION_OVERRIDES: {},
                     CONF_GROUP_OVERRIDES: {},
                     CONF_INCLUDE_INTERNAL: DEFAULT_INCLUDE_INTERNAL,
@@ -343,8 +518,7 @@ class CbusCgateConfigFlow(ConfigFlow, domain=DOMAIN):
             description_placeholders={
                 "summary": project_summary(self._project),
                 "connection": (
-                    f"{self._connection.get(CONF_HOST)}:"
-                    f"{self._connection.get(CONF_COMMAND_PORT)}"
+                    f"{self._connection.get(CONF_HOST)}:{self._connection.get(CONF_COMMAND_PORT)}"
                 ),
             },
         )
@@ -355,12 +529,70 @@ class CbusCgateConfigFlow(ConfigFlow, domain=DOMAIN):
         """Choose how to update the stored Toolkit project."""
         entry = self._get_reconfigure_entry()
         if self._old_project is None:
-            self._old_project = await async_load_project(
-                self.hass, entry.data[CONF_PROJECT_KEY]
-            )
-        return self.async_show_menu(
-            step_id="reconfigure",
-            menu_options=["reconfigure_fetch", "reconfigure_upload"],
+            self._old_project = await async_load_project(self.hass, entry.data[CONF_PROJECT_KEY])
+        menu_options = ["reconfigure_fetch", "reconfigure_upload"]
+        if await self._async_detect_addons(refresh=True):
+            menu_options.insert(0, "reconfigure_addon")
+        return self.async_show_menu(step_id="reconfigure", menu_options=menu_options)
+
+    async def async_step_reconfigure_addon(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Fetch an update from a running C-Gate Server add-on."""
+        entry = self._get_reconfigure_entry()
+        if self._old_project is None:
+            self._old_project = await async_load_project(self.hass, entry.data[CONF_PROJECT_KEY])
+        assert self._old_project is not None
+
+        addons = await self._async_detect_addons(refresh=True)
+        if not addons:
+            return self.async_abort(reason="addon_not_found")
+
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            addon = await self._async_addon_by_slug(str(user_input[CONF_ADDON_SLUG]))
+            if addon is None:
+                errors["base"] = "addon_not_available"
+            else:
+                expected_project = str(user_input.get(CONF_PROJECT_NAME, "")).strip()
+                connection = _connection_for_addon(addon)
+                try:
+                    project = await self._async_fetch_addon_project(addon)
+                    if (
+                        expected_project
+                        and project["project_name"].casefold() != expected_project.casefold()
+                    ):
+                        raise ProjectError(
+                            f"The add-on backup contains {project['project_name']}, "
+                            f"not {expected_project}"
+                        )
+                    self._validate_reconfigured_project(project)
+                    self._project = project
+                    self._reconfigure_connection = connection
+                except AddonProjectError as err:
+                    _LOGGER.warning("Unable to download Toolkit backup from add-on: %s", err)
+                    errors["base"] = "cannot_fetch_project"
+                except ProjectError as err:
+                    _LOGGER.warning("C-Gate add-on project update was rejected: %s", err)
+                    errors["base"] = (
+                        "different_project"
+                        if "different C-Bus project" in str(err)
+                        else "invalid_fetched_project"
+                    )
+                except (OSError, ValueError) as err:
+                    _LOGGER.warning("C-Gate add-on returned an invalid Toolkit project: %s", err)
+                    errors["base"] = "invalid_fetched_project"
+                else:
+                    return await self.async_step_reconfigure_confirm()
+
+        default_project = entry.data.get(CONF_PROJECT_NAME, "")
+        return self.async_show_form(
+            step_id="reconfigure_addon",
+            data_schema=_addon_schema(addons, default_project=default_project),
+            errors=errors,
+            description_placeholders={
+                "addon_count": str(len(addons)),
+            },
         )
 
     async def async_step_reconfigure_fetch(
@@ -370,9 +602,7 @@ class CbusCgateConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         entry = self._get_reconfigure_entry()
         if self._old_project is None:
-            self._old_project = await async_load_project(
-                self.hass, entry.data[CONF_PROJECT_KEY]
-            )
+            self._old_project = await async_load_project(self.hass, entry.data[CONF_PROJECT_KEY])
         assert self._old_project is not None
 
         hubs = entry.data.get(CONF_HUB_CONNECTIONS, {})
@@ -390,21 +620,11 @@ class CbusCgateConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             project_name = str(user_input[CONF_PROJECT_NAME]).strip()
             connection = _connection_from_input(user_input)
-            endpoint = CgateEndpoint(
-                host=connection[CONF_HOST],
-                command_port=connection[CONF_COMMAND_PORT],
-                event_port=connection[CONF_EVENT_PORT],
-                status_port=connection[CONF_STATUS_PORT],
-                config_port=connection[CONF_CONFIG_PORT],
-                project=project_name,
-            )
             try:
-                raw = await async_fetch_project_xml(endpoint)
-                project = await self.hass.async_add_executor_job(
-                    parse_project_bytes,
-                    raw,
+                project = await self._async_fetch_project(
+                    project_name,
+                    connection,
                     f"{project_name}.xml (fetched from C-Gate)",
-                    "xml",
                 )
                 self._validate_reconfigured_project(project)
                 self._project = project
@@ -437,9 +657,7 @@ class CbusCgateConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         entry = self._get_reconfigure_entry()
         if self._old_project is None:
-            self._old_project = await async_load_project(
-                self.hass, entry.data[CONF_PROJECT_KEY]
-            )
+            self._old_project = await async_load_project(self.hass, entry.data[CONF_PROJECT_KEY])
         assert self._old_project is not None
         if user_input is not None:
             try:
@@ -488,13 +706,13 @@ class CbusCgateConfigFlow(ConfigFlow, domain=DOMAIN):
             project_key = await async_save_project(self.hass, self._project)
             old_hubs = entry.data[CONF_HUB_CONNECTIONS]
             fallback = next(iter(old_hubs.values()), {})
-            new_hubs = {
-                str(network["address"]): old_hubs.get(
-                    str(network["address"]),
-                    {**fallback, CONF_ENABLED: True},
-                )
-                for network in self._project["networks"]
-            }
+            new_hubs = {}
+            for network in self._project["networks"]:
+                key = str(network["address"])
+                settings = old_hubs.get(key, {**fallback, CONF_ENABLED: True})
+                if self._reconfigure_connection is not None:
+                    settings = {**settings, **self._reconfigure_connection}
+                new_hubs[key] = settings
             new_mappings = {
                 **self._project["default_application_mappings"],
                 **entry.data.get(CONF_APPLICATION_MAPPINGS, {}),
@@ -515,9 +733,7 @@ class CbusCgateConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="reconfigure_confirm",
             data_schema=vol.Schema({}),
-            description_placeholders={
-                "summary": project_diff(self._old_project, self._project)
-            },
+            description_placeholders={"summary": project_diff(self._old_project, self._project)},
         )
 
 
@@ -532,9 +748,7 @@ class CbusCgateOptionsFlow(OptionsFlow):
 
     async def _load_project(self) -> dict[str, Any]:
         if self._project is None:
-            project = await async_load_project(
-                self.hass, self.config_entry.data[CONF_PROJECT_KEY]
-            )
+            project = await async_load_project(self.hass, self.config_entry.data[CONF_PROJECT_KEY])
             if project is None:
                 raise RuntimeError("Stored Toolkit project is missing")
             self._project = project
@@ -585,13 +799,27 @@ class CbusCgateOptionsFlow(OptionsFlow):
             step_id="connection",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_ENABLED, default=current.get(CONF_ENABLED, True)): BooleanSelector(),
-                    vol.Required(CONF_HOST, default=current[CONF_HOST]): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
-                    vol.Required(CONF_COMMAND_PORT, default=current[CONF_COMMAND_PORT]): _port_selector(DEFAULT_COMMAND_PORT),
-                    vol.Required(CONF_EVENT_PORT, default=current[CONF_EVENT_PORT]): _port_selector(DEFAULT_EVENT_PORT),
-                    vol.Required(CONF_STATUS_PORT, default=current[CONF_STATUS_PORT]): _port_selector(DEFAULT_STATUS_PORT),
-                    vol.Required(CONF_CONFIG_PORT, default=current[CONF_CONFIG_PORT]): _port_selector(DEFAULT_CONFIG_PORT),
-                    vol.Required(CONF_AUTO_OPEN, default=current.get(CONF_AUTO_OPEN, True)): BooleanSelector(),
+                    vol.Required(
+                        CONF_ENABLED, default=current.get(CONF_ENABLED, True)
+                    ): BooleanSelector(),
+                    vol.Required(CONF_HOST, default=current[CONF_HOST]): TextSelector(
+                        TextSelectorConfig(type=TextSelectorType.TEXT)
+                    ),
+                    vol.Required(
+                        CONF_COMMAND_PORT, default=current[CONF_COMMAND_PORT]
+                    ): _port_selector(DEFAULT_COMMAND_PORT),
+                    vol.Required(CONF_EVENT_PORT, default=current[CONF_EVENT_PORT]): _port_selector(
+                        DEFAULT_EVENT_PORT
+                    ),
+                    vol.Required(
+                        CONF_STATUS_PORT, default=current[CONF_STATUS_PORT]
+                    ): _port_selector(DEFAULT_STATUS_PORT),
+                    vol.Required(
+                        CONF_CONFIG_PORT, default=current[CONF_CONFIG_PORT]
+                    ): _port_selector(DEFAULT_CONFIG_PORT),
+                    vol.Required(
+                        CONF_AUTO_OPEN, default=current.get(CONF_AUTO_OPEN, True)
+                    ): BooleanSelector(),
                 }
             ),
         )
@@ -675,8 +903,14 @@ class CbusCgateOptionsFlow(OptionsFlow):
         project = await self._load_project()
         assert self._selected_network is not None
         assert self._selected_application is not None
-        network = next(item for item in project["networks"] if item["address"] == self._selected_network)
-        application = next(item for item in network["applications"] if item["address"] == self._selected_application)
+        network = next(
+            item for item in project["networks"] if item["address"] == self._selected_network
+        )
+        application = next(
+            item
+            for item in network["applications"]
+            if item["address"] == self._selected_application
+        )
         choices = {
             str(group["address"]): f"{group['address']} — {group['name']}"
             for group in application["groups"]
@@ -731,9 +965,7 @@ class CbusCgateOptionsFlow(OptionsFlow):
                             ),
                         ),
                     ): NumberSelector(
-                        NumberSelectorConfig(
-                            min=1, max=8, step=1, mode=NumberSelectorMode.BOX
-                        )
+                        NumberSelectorConfig(min=1, max=8, step=1, mode=NumberSelectorMode.BOX)
                     ),
                     vol.Required(
                         CONF_OPTIMISTIC,

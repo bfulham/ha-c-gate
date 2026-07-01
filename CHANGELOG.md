@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.3
+
+- Fixed detected add-on imports producing percentage sensors instead of lux sensors. The add-on path now downloads the add-on's real current CBZ backup from its built-in `/project/backup` endpoint instead of relying on `DBGETXML`, preserving the modern SQLite `BroadcastActive`, `BroadcastBlock`, and `GroupAddress` programming used by Light Level Broadcast.
+- Added a byte-based CBZ import path with the same archive size, path-safety, and expanded-file validation as manual uploads.
+- Added durable `sensor_kind: illuminance` and `native_unit: lx` metadata to detected Light Level Broadcast groups; group sensors accept these markers as well as the legacy boolean flag.
+- Fixed add-on autodetection during setup and reconfigure by querying Supervisor directly when Home Assistant's cached add-on details are not ready, while retaining the cached-data fallback.
+- Made the expected add-on project name optional because the downloaded backup identifies its own project.
+- Validated the add-on-backup parser against the supplied THEBEND project: 43 Light Level Broadcast groups are retained as illuminance sensors in `lx`.
+
 ## 0.4.2
 
 - Fixed modern Toolkit 5753L/SENPIRIB Light Level Broadcast detection. These projects store the feature as `BroadcastActive = 0x4` plus a zero-based `BroadcastBlock`, rather than using property names containing “light level”.

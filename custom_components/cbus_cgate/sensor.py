@@ -43,7 +43,7 @@ from .const import (
     UNIT_CODE_WATTS,
 )
 from .entity import CbusGroupEntity, application_device_info
-from .project import is_light_level_group_name
+from .project import is_light_level_group_name, light_level_broadcast_to_lux
 from .runtime import CbusCgateRuntime, GroupDefinition, MeasurementDefinition
 
 PARALLEL_UPDATES = 0
@@ -62,8 +62,7 @@ async def async_setup_entry(
         if definition.entity_type == "sensor"
     )
     entities.extend(
-        CbusMeasurementSensor(runtime, definition)
-        for definition in runtime.measurement_definitions
+        CbusMeasurementSensor(runtime, definition) for definition in runtime.measurement_definitions
     )
     async_add_entities(entities)
 
@@ -71,18 +70,40 @@ async def async_setup_entry(
 class CbusGroupSensor(CbusGroupEntity, SensorEntity):
     """A group level exposed as a read-only numeric sensor."""
 
-    _attr_native_unit_of_measurement = "%"
     _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(self, runtime: CbusCgateRuntime, definition: GroupDefinition) -> None:
         super().__init__(runtime, definition)
-        if is_light_level_group_name(self.group["name"]):
-            self._attr_icon = "mdi:brightness-percent"
+        self._is_light_level_broadcast = bool(
+            self.group.get("light_level_broadcast")
+            or self.group.get("sensor_kind") == "illuminance"
+            or self.group.get("native_unit") == LIGHT_LUX
+        )
+        if self._is_light_level_broadcast:
+            self._attr_native_unit_of_measurement = LIGHT_LUX
+            self._attr_device_class = SensorDeviceClass.ILLUMINANCE
+            self._attr_icon = "mdi:brightness-6"
+        else:
+            self._attr_native_unit_of_measurement = PERCENTAGE
+            if is_light_level_group_name(self.group["name"]):
+                self._attr_icon = "mdi:brightness-percent"
 
     @property
     def native_value(self) -> float | None:
         level = self.runtime.group_states[self.key].level
-        return None if level is None else round(level * 100 / 255, 1)
+        if level is None:
+            return None
+        if self._is_light_level_broadcast:
+            return light_level_broadcast_to_lux(level, int(self.group.get("lux_per_level", 10)))
+        return round(level * 100 / 255, 1)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        attributes = super().extra_state_attributes
+        if self._is_light_level_broadcast:
+            attributes["raw_cbus_level"] = self.runtime.group_states[self.key].level
+            attributes["lux_per_level"] = int(self.group.get("lux_per_level", 10))
+        return attributes
 
 
 _UNIT_INFO: dict[int, tuple[str | None, SensorDeviceClass | None]] = {
@@ -92,9 +113,18 @@ _UNIT_INFO: dict[int, tuple[str | None, SensorDeviceClass | None]] = {
     UNIT_CODE_HERTZ: (UnitOfFrequency.HERTZ, SensorDeviceClass.FREQUENCY),
     UNIT_CODE_JOULES: (UnitOfEnergy.JOULE, SensorDeviceClass.ENERGY),
     UNIT_CODE_LITRES: (UnitOfVolume.LITERS, SensorDeviceClass.VOLUME),
-    UNIT_CODE_LITRES_PER_HOUR: (UnitOfVolumeFlowRate.LITERS_PER_HOUR, SensorDeviceClass.VOLUME_FLOW_RATE),
-    UNIT_CODE_LITRES_PER_MIN: (UnitOfVolumeFlowRate.LITERS_PER_MINUTE, SensorDeviceClass.VOLUME_FLOW_RATE),
-    UNIT_CODE_LITRES_PER_SEC: (UnitOfVolumeFlowRate.LITERS_PER_SECOND, SensorDeviceClass.VOLUME_FLOW_RATE),
+    UNIT_CODE_LITRES_PER_HOUR: (
+        UnitOfVolumeFlowRate.LITERS_PER_HOUR,
+        SensorDeviceClass.VOLUME_FLOW_RATE,
+    ),
+    UNIT_CODE_LITRES_PER_MIN: (
+        UnitOfVolumeFlowRate.LITERS_PER_MINUTE,
+        SensorDeviceClass.VOLUME_FLOW_RATE,
+    ),
+    UNIT_CODE_LITRES_PER_SEC: (
+        UnitOfVolumeFlowRate.LITERS_PER_SECOND,
+        SensorDeviceClass.VOLUME_FLOW_RATE,
+    ),
     UNIT_CODE_LUX: (LIGHT_LUX, SensorDeviceClass.ILLUMINANCE),
     UNIT_CODE_PERCENT: (PERCENTAGE, None),
     UNIT_CODE_SECONDS: (UnitOfTime.SECONDS, SensorDeviceClass.DURATION),
@@ -129,13 +159,10 @@ class CbusMeasurementSensor(SensorEntity):
             self.measurement["channel"],
         )
         self._attr_unique_id = (
-            f"{runtime.installation_id}:n{self.key[0]}:a{self.key[1]}:"
-            f"d{self.key[2]}:c{self.key[3]}"
+            f"{runtime.installation_id}:n{self.key[0]}:a{self.key[1]}:d{self.key[2]}:c{self.key[3]}"
         )
         self._attr_name = self.measurement["name"]
-        self._attr_device_info = application_device_info(
-            runtime, self.network, self.application
-        )
+        self._attr_device_info = application_device_info(runtime, self.network, self.application)
         self._unsubscribe = None
 
     @property
@@ -174,9 +201,7 @@ class CbusMeasurementSensor(SensorEntity):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        self._unsubscribe = self.runtime.subscribe_measurement(
-            self.key, self.async_write_ha_state
-        )
+        self._unsubscribe = self.runtime.subscribe_measurement(self.key, self.async_write_ha_state)
 
     async def async_will_remove_from_hass(self) -> None:
         if self._unsubscribe is not None:

@@ -4,11 +4,11 @@ A native Home Assistant integration for Clipsal/Schneider Electric C-Bus install
 
 It is designed to work with the companion C-Gate Server Home Assistant add-on or an existing C-Gate installation. It does not use MQTT and it never opens a CNI directly.
 
-## v0.4.2 features
+## v0.4.3 features
 
 - Automatically detects a running **C-Gate Server** add-on on Home Assistant installations with Supervisor.
 - Uses the detected add-on's internal hostname, standard ports, and configured Toolkit project name, avoiding manual connection details.
-- Fetches the project loaded by C-Gate directly over the command port using `DBGETXML`; no Toolkit backup upload is required.
+- Downloads the detected add-on's current CBZ backup directly over the internal Supervisor network, preserving modern SQLite Toolkit programming without a manual upload.
 - Manual connection to another C-Gate server and manual import of `.cbz`, `.xml`, and `.db` projects remain available.
 - Creates one Home Assistant hub device per imported C-Bus network/CNI and one child device per populated C-Bus application.
 - Represents motion and light-level values through C-Bus groups on the application device rather than separate physical-sensor devices.
@@ -59,9 +59,9 @@ Manual installation is also possible by copying `custom_components/cbus_cgate` i
 2. Upload/load the Toolkit project in the add-on and configure its `project_name` option.
 3. Add this integration and choose **Use detected C-Gate add-on**.
 4. Confirm the detected add-on and project name.
-5. The integration uses the add-on's Supervisor-network hostname and standard C-Gate ports automatically, fetches the project, and presents the import summary.
+5. The integration uses the add-on's Supervisor-network hostname and standard C-Gate ports automatically, downloads its current CBZ backup, and presents the import summary.
 
-Only running add-ons are offered. If Supervisor is not available, the detected-add-on option is omitted and the manual paths remain available.
+Only running add-ons are offered. Discovery first uses Home Assistant's add-on cache and then queries Supervisor directly when that cache is not ready. If Supervisor is not available, the detected-add-on option is omitted and the manual paths remain available. The expected project-name field is optional because the backup identifies its own project.
 
 ### Another C-Gate server
 
@@ -121,7 +121,7 @@ For example, raw level `49` is represented as `490 lx`. Groups whose names conta
 
 ## C-Gate requirements
 
-The C-Gate project must exist on the selected server. Direct project fetch requires **Program** access because it uses `DBGETXML`; normal runtime control requires **Operate** or **Program** access.
+The C-Gate project must exist on the selected server. The detected-add-on path downloads the add-on's built-in current backup on internal port `8099`, then uses the standard C-Gate ports for runtime control. Manual fetching from another C-Gate server still uses `DBGETXML` and requires **Program** access. Normal runtime control requires **Operate** or **Program** access.
 
 The integration uses:
 
@@ -150,7 +150,7 @@ Open the integration menu and select **Reconfigure**. The available choices are:
 
 Entity unique IDs use a generated installation ID plus numeric C-Bus addresses, never group names. Renaming a group therefore preserves automations and history.
 
-After installing v0.4.2, run **Reconfigure → Fetch from detected C-Gate add-on** or upload the latest project once. Earlier versions saved a normalised project that did not retain the raw `BroadcastActive` and `BroadcastBlock` properties, so a fresh project parse is required. On the following reload, stale `light.*` registry entries are removed automatically and the replacement `sensor.*` illuminance entities are created.
+After installing v0.4.3, run **Reconfigure → Fetch from detected C-Gate add-on** once. This path now downloads the real CBZ/SQLite backup instead of importing `DBGETXML` output, so the `BroadcastActive`, `BroadcastBlock`, and `GroupAddress` properties required for lux detection are retained. On reload, the existing sensor entities update from `%` to `lx`; stale `light.*` registry entries are also removed automatically when a group previously used the light domain.
 
 ## Current limitations
 
@@ -158,8 +158,8 @@ After installing v0.4.2, run **Reconfigure → Fetch from detected C-Gate add-on
 - Covers are represented as one 0–255 position group. Paired up/down relay covers need a future composite-device mapping.
 - Light Level Broadcast conversion uses the C-Bus broadcast scale of 10 lux per group level. It does not poll physical Unit Parameters directly.
 - A project can contain networks that are offline or use interfaces unavailable to the C-Gate host; those hubs remain unavailable without blocking other hubs.
-- Direct `DBGETXML` fetch imports XML applications, groups, units, and programming properties. Measurement Application device/channel definitions from a modern SQLite Toolkit database still require the manual CBZ/DB import path.
-- The parser has been validated against a real modern Toolkit CBZ and detects all 43 configured Light Level Broadcast groups. Direct fetching still depends on C-Gate returning the corresponding unit programming properties in `DBGETXML`.
+- Fetching from another, non-add-on C-Gate server still uses `DBGETXML`. Modern SQLite-only metadata, including some Measurement Application definitions and device programming, may require a CBZ/DB import.
+- The detected-add-on backup path and manual CBZ/DB path retain the complete modern SQLite project. The parser has been validated against the supplied THEBEND backup and detects all 43 configured Light Level Broadcast groups as illuminance sensors.
 
 ## Debug logging
 

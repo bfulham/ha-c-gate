@@ -4,9 +4,10 @@
     "step": {
       "user": {
         "title": "Import C-Bus Toolkit project",
-        "description": "Fetch the project currently loaded by the C-Gate Server add-on, or upload a Toolkit backup manually.",
+        "description": "Automatically use a running C-Gate Server add-on, connect to another C-Gate server, or upload a Toolkit backup manually.",
         "menu_options": {
-          "fetch_project": "Fetch from C-Gate",
+          "addon_project": "Use detected C-Gate add-on",
+          "fetch_project": "Fetch from another C-Gate server",
           "upload_project": "Upload a project file"
         }
       },
@@ -36,9 +37,10 @@
       },
       "reconfigure": {
         "title": "Update Toolkit project",
-        "description": "Fetch the current project from C-Gate or upload a replacement file. Address-based entity IDs are preserved.",
+        "description": "Automatically fetch from a running C-Gate Server add-on, connect to another C-Gate server, or upload a replacement file. Address-based entity IDs are preserved.",
         "menu_options": {
-          "reconfigure_fetch": "Fetch latest project from C-Gate",
+          "reconfigure_addon": "Fetch from detected C-Gate add-on",
+          "reconfigure_fetch": "Fetch latest project from another C-Gate server",
           "reconfigure_upload": "Upload a project file"
         }
       },
@@ -86,17 +88,36 @@
         "data": {
           "project_file": "Updated Toolkit project"
         }
+      },
+      "addon_project": {
+        "title": "Use detected C-Gate add-on",
+        "description": "Home Assistant found {addon_count} running C-Gate Server add-on(s). The integration downloads the add-on's current CBZ backup so modern Toolkit programming, including Light Level Broadcast metadata, is preserved. The project-name field is optional and is only used to verify the backup.",
+        "data": {
+          "addon_slug": "C-Gate add-on",
+          "project_name": "Expected project name (optional)"
+        }
+      },
+      "reconfigure_addon": {
+        "title": "Fetch from detected C-Gate add-on",
+        "description": "Home Assistant found {addon_count} running C-Gate Server add-on(s). The integration downloads the selected add-on's current CBZ backup and uses its internal hostname and standard C-Gate ports for every imported hub.",
+        "data": {
+          "addon_slug": "C-Gate add-on",
+          "project_name": "Expected project name (optional)"
+        }
       }
     },
     "error": {
       "invalid_project": "The uploaded file is not a valid supported C-Bus Toolkit project",
-      "cannot_fetch_project": "Unable to fetch the project from C-Gate. Check the host, command port, project name, and the add-on integration_clients access list.",
-      "invalid_fetched_project": "C-Gate returned project XML that could not be parsed as a supported Toolkit project.",
-      "different_project": "The selected update belongs to a different C-Bus project."
+      "cannot_fetch_project": "Unable to fetch the Toolkit project. For a detected add-on, make sure the C-Gate Server add-on is running and its current-backup download is available. For another C-Gate server, check the host, command port, project name, and access list.",
+      "invalid_fetched_project": "The fetched project backup could not be parsed as a supported Toolkit project.",
+      "different_project": "The selected update belongs to a different C-Bus project.",
+      "addon_not_available": "The selected C-Gate add-on is no longer running or available.",
+      "project_required": "Enter the Toolkit project name loaded by C-Gate."
     },
     "abort": {
       "already_configured": "This C-Bus project is already configured",
-      "reconfigure_successful": "The Toolkit project was updated"
+      "reconfigure_successful": "The Toolkit project was updated",
+      "addon_not_found": "No running C-Gate Server add-on was detected. Start the add-on or use the manual C-Gate connection option."
     }
   },
   "options": {
@@ -175,7 +196,7 @@
   "selector": {
     "entity_type": {
       "options": {
-        "auto": "Automatic (motion/light-level/relay/dimmer inference)",
+        "auto": "Automatic (motion, light-level broadcast, relay, and dimmer inference)",
         "light": "Light",
         "switch": "Switch",
         "binary_sensor": "Binary sensor",

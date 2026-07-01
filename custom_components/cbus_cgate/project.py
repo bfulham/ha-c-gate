@@ -7,17 +7,17 @@ C-Gate runtime so setup and project updates can succeed while C-Gate is offline.
 
 from __future__ import annotations
 
-from collections import Counter, defaultdict
-from dataclasses import dataclass
 import hashlib
 import io
 import re
 import sqlite3
+import xml.etree.ElementTree as ET
+import zipfile
+from collections import Counter, defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
-import xml.etree.ElementTree as ET
-import zipfile
 
 MAX_UPLOAD_BYTES = 64 * 1024 * 1024
 MAX_EXPANDED_BYTES = 64 * 1024 * 1024
@@ -144,8 +144,7 @@ def _light_level_broadcast_programming(
     blocks: list[int] = []
     groups: list[int] = []
     normalised_properties = {
-        _normalise_property_name(name): raw_value
-        for name, raw_value in properties.items()
+        _normalise_property_name(name): raw_value for name, raw_value in properties.items()
     }
     ignored_tokens = (
         "enable",
@@ -160,8 +159,7 @@ def _light_level_broadcast_programming(
     for name, raw_value in properties.items():
         normalised = _normalise_property_name(name)
         quantity = any(
-            token in normalised
-            for token in ("lightlevel", "ambientlight", "illuminance", "lux")
+            token in normalised for token in ("lightlevel", "ambientlight", "illuminance", "lux")
         )
         if not quantity or "broadcast" not in normalised:
             continue
@@ -201,9 +199,7 @@ def _has_light_level_broadcast_programming(
 ) -> bool:
     """Return whether parsed unit properties select a broadcast destination."""
     return bool(
-        int(programming.get("mask", 0))
-        or programming.get("blocks")
-        or programming.get("groups")
+        int(programming.get("mask", 0)) or programming.get("blocks") or programming.get("groups")
     )
 
 
@@ -415,37 +411,59 @@ def _resolve_motion_groups(
     return unique
 
 
+def _extract_archive_payload(
+    archive: zipfile.ZipFile,
+    *,
+    archive_name: str,
+) -> ProjectPayload:
+    """Extract the most likely Toolkit project from an open CBZ archive."""
+    members = [member for member in archive.infolist() if not member.is_dir()]
+    if len(members) > MAX_ARCHIVE_MEMBERS:
+        raise ProjectError("Project archive contains too many files")
+    for member in members:
+        parts = Path(member.filename).parts
+        if member.filename.startswith("/") or ".." in parts:
+            raise ProjectError("Project archive contains an unsafe path")
+    candidates = [
+        member for member in members if Path(member.filename).suffix.casefold() in {".db", ".xml"}
+    ]
+    if not candidates:
+        raise ProjectError("No C-Bus Toolkit project database or XML was found")
+    candidate = max(candidates, key=lambda item: item.file_size)
+    if candidate.file_size > MAX_EXPANDED_BYTES:
+        raise ProjectError("Expanded project file is too large")
+    raw = archive.read(candidate)
+    fmt = "sqlite" if raw.startswith(b"SQLite format 3\x00") else "xml"
+    source_name = (
+        f"{archive_name} / {candidate.filename}"
+        if archive_name and archive_name != candidate.filename
+        else candidate.filename
+    )
+    return ProjectPayload(raw, source_name, fmt)
+
+
+def _extract_payload_bytes(raw: bytes, source_name: str) -> ProjectPayload:
+    """Extract a Toolkit project from raw DB/XML/CBZ bytes."""
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise ProjectError("Project upload is too large")
+
+    buffer = io.BytesIO(raw)
+    if not zipfile.is_zipfile(buffer):
+        fmt = "sqlite" if raw.startswith(b"SQLite format 3\x00") else "xml"
+        return ProjectPayload(raw, source_name, fmt)
+
+    buffer.seek(0)
+    try:
+        with zipfile.ZipFile(buffer) as archive:
+            return _extract_archive_payload(archive, archive_name=source_name)
+    except zipfile.BadZipFile as err:
+        raise ProjectError("The project backup is not a valid CBZ archive") from err
+
+
 def _extract_payload(path: Path) -> ProjectPayload:
     if path.stat().st_size > MAX_UPLOAD_BYTES:
         raise ProjectError("Project upload is too large")
-
-    if not zipfile.is_zipfile(path):
-        raw = path.read_bytes()
-        if raw.startswith(b"SQLite format 3\x00"):
-            return ProjectPayload(raw, path.name, "sqlite")
-        return ProjectPayload(raw, path.name, "xml")
-
-    with zipfile.ZipFile(path) as archive:
-        members = [member for member in archive.infolist() if not member.is_dir()]
-        if len(members) > MAX_ARCHIVE_MEMBERS:
-            raise ProjectError("Project archive contains too many files")
-        for member in members:
-            parts = Path(member.filename).parts
-            if member.filename.startswith("/") or ".." in parts:
-                raise ProjectError("Project archive contains an unsafe path")
-        candidates = [
-            member
-            for member in members
-            if Path(member.filename).suffix.casefold() in {".db", ".xml"}
-        ]
-        if not candidates:
-            raise ProjectError("No C-Bus Toolkit project database or XML was found")
-        candidate = max(candidates, key=lambda item: item.file_size)
-        if candidate.file_size > MAX_EXPANDED_BYTES:
-            raise ProjectError("Expanded project file is too large")
-        raw = archive.read(candidate)
-        fmt = "sqlite" if raw.startswith(b"SQLite format 3\x00") else "xml"
-        return ProjectPayload(raw, candidate.filename, fmt)
+    return _extract_payload_bytes(path.read_bytes(), path.name)
 
 
 def parse_project_bytes(
@@ -485,6 +503,15 @@ def parse_project_bytes(
     return project
 
 
+def parse_project_archive_bytes(
+    raw: bytes,
+    source_name: str = "project.cbz",
+) -> dict[str, Any]:
+    """Parse raw DB/XML/CBZ bytes using the same upload validation path."""
+    payload = _extract_payload_bytes(raw, source_name)
+    return parse_project_bytes(payload.content, payload.source_name, payload.format)
+
+
 def parse_project_path(path: Path) -> dict[str, Any]:
     """Parse a Toolkit project file into a compact versioned model."""
     payload = _extract_payload(path)
@@ -504,7 +531,9 @@ def _parse_xml(raw: bytes) -> dict[str, Any]:
         raise ProjectError("The upload does not contain a C-Bus Project element")
 
     project_name = (project_el.findtext("TagName") or "C-Bus Project").strip()
-    project_id = (project_el.findtext("OID") or project_el.findtext("Address") or project_name).strip()
+    project_id = (
+        project_el.findtext("OID") or project_el.findtext("Address") or project_name
+    ).strip()
     networks: list[dict[str, Any]] = []
 
     for network_el in project_el.findall("Network"):
@@ -513,8 +542,12 @@ def _parse_xml(raw: bytes) -> dict[str, Any]:
             continue
         network_name = (network_el.findtext("TagName") or f"Network {network_address}").strip()
         interface_el = network_el.find("Interface")
-        interface_type = (interface_el.findtext("InterfaceType") if interface_el is not None else "None") or "None"
-        interface_address = (interface_el.findtext("InterfaceAddress") if interface_el is not None else "") or ""
+        interface_type = (
+            interface_el.findtext("InterfaceType") if interface_el is not None else "None"
+        ) or "None"
+        interface_address = (
+            interface_el.findtext("InterfaceAddress") if interface_el is not None else ""
+        ) or ""
 
         app_use_counts: Counter[int] = Counter()
         relay_groups: set[tuple[int, int]] = set()
@@ -547,12 +580,10 @@ def _parse_xml(raw: bytes) -> dict[str, Any]:
 
             if 0 <= unit_address <= 255:
                 supports_illuminance = (
-                    unit_type in ILLUMINANCE_UNIT_TYPES
-                    or catalog in ILLUMINANCE_CATALOG_NUMBERS
+                    unit_type in ILLUMINANCE_UNIT_TYPES or catalog in ILLUMINANCE_CATALOG_NUMBERS
                 )
                 supports_motion = (
-                    unit_type in MOTION_UNIT_TYPES
-                    or catalog in MOTION_CATALOG_NUMBERS
+                    unit_type in MOTION_UNIT_TYPES or catalog in MOTION_CATALOG_NUMBERS
                 )
                 light_level_broadcast = _light_level_broadcast_programming(pp)
                 if (
@@ -606,7 +637,9 @@ def _parse_xml(raw: bytes) -> dict[str, Any]:
             applications_model.append(
                 {
                     "address": app_address,
-                    "name": (application_el.findtext("TagName") or f"Application {app_address}").strip(),
+                    "name": (
+                        application_el.findtext("TagName") or f"Application {app_address}"
+                    ).strip(),
                     "referenced_by_units": app_use_counts.get(app_address, 0),
                     "groups": groups_model,
                     "measurements": [],
@@ -656,13 +689,13 @@ def _parse_sqlite(raw: bytes) -> dict[str, Any]:
             required = {"project", "network", "application", "_group", "tagged_entity"}
             tables = {
                 row[0]
-                for row in connection.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
-                )
+                for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
             }
             missing = required - tables
             if missing:
-                raise ProjectError("Toolkit database is missing required tables: " + ", ".join(sorted(missing)))
+                raise ProjectError(
+                    "Toolkit database is missing required tables: " + ", ".join(sorted(missing))
+                )
             return _parse_sqlite_connection(connection)
         except sqlite3.Error as err:
             raise ProjectError(f"Unable to read Toolkit project database: {err}") from err
@@ -682,7 +715,9 @@ def _parse_sqlite_connection(connection: sqlite3.Connection) -> dict[str, Any]:
         raise ProjectError("Toolkit database does not contain a project")
     project_name = str(project_row["tag_name"] or "C-Bus Project").strip()
     project_id = str(project_row["oid"] or project_name).strip()
-    db_row = connection.execute("SELECT db_version FROM installation ORDER BY id LIMIT 1").fetchone()
+    db_row = connection.execute(
+        "SELECT db_version FROM installation ORDER BY id LIMIT 1"
+    ).fetchone()
     db_version = str(db_row[0]) if db_row else ""
 
     network_rows = connection.execute(
@@ -735,7 +770,9 @@ def _parse_sqlite_connection(connection: sqlite3.Connection) -> dict[str, Any]:
         for unit_row in unit_rows:
             unit_id = int(unit_row["id"])
             properties = pp_by_unit.get(unit_id, {})
-            applications = [value for value in _hex_values(properties.get("Application")) if value != 0xFF]
+            applications = [
+                value for value in _hex_values(properties.get("Application")) if value != 0xFF
+            ]
             groups = _hex_values(properties.get("GroupAddress"))
             app_use_counts.update(applications)
             unit_type = str(unit_row["unit_type"] or "").strip().upper()
@@ -756,12 +793,10 @@ def _parse_sqlite_connection(connection: sqlite3.Connection) -> dict[str, Any]:
             unit_address = _safe_int(unit_row["address"], -1)
             if 0 <= unit_address <= 255:
                 supports_illuminance = (
-                    unit_type in ILLUMINANCE_UNIT_TYPES
-                    or catalog in ILLUMINANCE_CATALOG_NUMBERS
+                    unit_type in ILLUMINANCE_UNIT_TYPES or catalog in ILLUMINANCE_CATALOG_NUMBERS
                 )
                 supports_motion = (
-                    unit_type in MOTION_UNIT_TYPES
-                    or catalog in MOTION_CATALOG_NUMBERS
+                    unit_type in MOTION_UNIT_TYPES or catalog in MOTION_CATALOG_NUMBERS
                 )
                 light_level_broadcast = _light_level_broadcast_programming(properties)
                 if (
@@ -782,7 +817,9 @@ def _parse_sqlite_connection(connection: sqlite3.Connection) -> dict[str, Any]:
                             "_group_addresses": groups,
                             "_pir_light_movement": _first(properties.get("PIRLightMovement")),
                             "_pir_dark_movement": _first(properties.get("PIRDarkMovement")),
-                            "_second_application_blocks": _first(properties.get("SecondApplicationBlocks")),
+                            "_second_application_blocks": _first(
+                                properties.get("SecondApplicationBlocks")
+                            ),
                             "_light_level_broadcast": light_level_broadcast,
                         }
                     )
@@ -854,7 +891,9 @@ def _parse_sqlite_connection(connection: sqlite3.Connection) -> dict[str, Any]:
                     {
                         "device": device_address,
                         "channel": channel_address,
-                        "device_name": str(measurement["device_name"] or f"Device {device_address}"),
+                        "device_name": str(
+                            measurement["device_name"] or f"Device {device_address}"
+                        ),
                         "name": str(measurement["channel_name"] or f"Channel {channel_address}"),
                         "units_type": str(measurement["units_type"] or ""),
                     }
@@ -900,21 +939,19 @@ def _finish_units(units: list[dict[str, Any]], applications: list[dict[str, Any]
     }
     for unit in units:
         unit["motion_groups"] = (
-            _resolve_motion_groups(unit, group_lookup)
-            if unit.get("supports_motion")
-            else []
+            _resolve_motion_groups(unit, group_lookup) if unit.get("supports_motion") else []
         )
         unit["light_level_broadcast_groups"] = (
             _resolve_light_level_broadcast_groups(unit, group_lookup)
             if unit.get("supports_illuminance")
-            or _has_light_level_broadcast_programming(
-                unit.get("_light_level_broadcast", {})
-            )
+            or _has_light_level_broadcast_programming(unit.get("_light_level_broadcast", {}))
             else []
         )
         for reference in unit["light_level_broadcast_groups"]:
             group = group_lookup[(reference["application"], reference["group"])]
             group["light_level_broadcast"] = True
+            group["sensor_kind"] = "illuminance"
+            group["native_unit"] = "lx"
             group["lux_per_level"] = LIGHT_LEVEL_BROADCAST_LUX_PER_LEVEL
             group["suggested_platform"] = "sensor"
         unit.pop("_applications", None)
@@ -949,13 +986,13 @@ def project_summary(project: dict[str, Any]) -> str:
     return (
         f"Project **{project['project_name']}** ({project['source_format']}, DB {project['db_version'] or 'unknown'}) "
         f"contains {len(networks)} networks, {len(applications)} populated applications, "
-        f"{len(groups)} group records and {len(visible)} named entity candidates.\n\n"
-        + connections
+        f"{len(groups)} group records and {len(visible)} named entity candidates.\n\n" + connections
     )
 
 
 def project_diff(old: dict[str, Any], new: dict[str, Any]) -> str:
     """Build a safe project replacement preview."""
+
     def groups(project: dict[str, Any]) -> dict[tuple[int, int, int], dict[str, Any]]:
         return {
             (network["address"], application["address"], group["address"]): group

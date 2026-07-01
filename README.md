@@ -4,7 +4,7 @@ A native Home Assistant integration for Clipsal/Schneider Electric C-Bus install
 
 It is designed to work with the companion C-Gate Server Home Assistant add-on or an existing C-Gate installation. It does not use MQTT and it never opens a CNI directly.
 
-## v0.4.1 features
+## v0.4.2 features
 
 - Automatically detects a running **C-Gate Server** add-on on Home Assistant installations with Supervisor.
 - Uses the detected add-on's internal hostname, standard ports, and configured Toolkit project name, avoiding manual connection details.
@@ -108,7 +108,7 @@ Light Level Broadcast detection takes precedence over the broad network/applicat
 
 ### Light Level Broadcast values
 
-Toolkit programming is inspected to identify the virtual key/block or group used for Light Level Broadcast. The importer accepts common bitmask, selected-block/key, and direct-group property layouts.
+Toolkit programming is inspected to identify the virtual key/block or group used for Light Level Broadcast. The importer accepts descriptive bitmask, selected-block/key, and direct-group properties, plus the modern 5753L/SENPIRIB `BroadcastActive = 0x4` and `BroadcastBlock` layout. `BroadcastBlock` is resolved through the unit's `GroupAddress` array, so the group name does not need to contain “lux” or “light level”.
 
 A detected broadcast group is exposed with:
 
@@ -150,7 +150,7 @@ Open the integration menu and select **Reconfigure**. The available choices are:
 
 Entity unique IDs use a generated installation ID plus numeric C-Bus addresses, never group names. Renaming a group therefore preserves automations and history.
 
-After upgrading an existing entry from before v0.4.0, run **Reconfigure → Fetch from detected C-Gate add-on** or upload the latest project once. This reparses the unit programming needed to identify Light Level Broadcast groups. Upgrading from v0.4.0 to v0.4.1 only requires a Home Assistant restart; stale `light.*` registry entries are removed automatically when their replacement `sensor.*` entities are created.
+After installing v0.4.2, run **Reconfigure → Fetch from detected C-Gate add-on** or upload the latest project once. Earlier versions saved a normalised project that did not retain the raw `BroadcastActive` and `BroadcastBlock` properties, so a fresh project parse is required. On the following reload, stale `light.*` registry entries are removed automatically and the replacement `sensor.*` illuminance entities are created.
 
 ## Current limitations
 
@@ -159,7 +159,7 @@ After upgrading an existing entry from before v0.4.0, run **Reconfigure → Fetc
 - Light Level Broadcast conversion uses the C-Bus broadcast scale of 10 lux per group level. It does not poll physical Unit Parameters directly.
 - A project can contain networks that are offline or use interfaces unavailable to the C-Gate host; those hubs remain unavailable without blocking other hubs.
 - Direct `DBGETXML` fetch imports XML applications, groups, units, and programming properties. Measurement Application device/channel definitions from a modern SQLite Toolkit database still require the manual CBZ/DB import path.
-- The included parser and mocked protocol tests pass; live validation against the add-on and a real C-Gate project is still required.
+- The parser has been validated against a real modern Toolkit CBZ and detects all 43 configured Light Level Broadcast groups. Direct fetching still depends on C-Gate returning the corresponding unit programming properties in `DBGETXML`.
 
 ## Debug logging
 

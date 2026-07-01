@@ -27,6 +27,7 @@ ILLUMINANCE_CATALOG_NUMBERS = {"5753L", "5753PEIRL", "5031PE"}
 MOTION_UNIT_TYPES = {"SENPIRIB"}
 MOTION_CATALOG_NUMBERS = {"5753L", "5753PEIRL"}
 LIGHT_LEVEL_BROADCAST_LUX_PER_LEVEL = 10
+TOOLKIT_LIGHT_LEVEL_BROADCAST_ACTIVE_FLAG = 0x04
 _MOTION_NAME_TOKENS = ("motion", "occupancy", "pir")
 _LIGHT_LEVEL_NAME_TOKENS = (
     "light level",
@@ -127,14 +128,25 @@ def _light_level_broadcast_programming(
 ) -> dict[str, list[int] | int]:
     """Extract light-level broadcast block/group programming from unit properties.
 
-    Toolkit generations have used slightly different property labels. The
-    common invariant is a property containing both the measured quantity and
-    the word ``broadcast``. Most units store a block bitmask, while some
-    templates expose a selected block/key or a direct group address.
+    Toolkit generations have used two different layouts:
+
+    * Descriptive properties such as ``LightLevelBroadcast`` or
+      ``IlluminanceBroadcastBlock``.
+    * The 5753L/SENPIRIB layout used by current Toolkit databases, where
+      ``BroadcastActive`` is a flags value and ``BroadcastBlock`` selects one
+      entry from the unit's ``GroupAddress`` array. Bit ``0x04`` means the
+      selected block is the Light Level Broadcast destination.
+
+    Most descriptive properties store a block bitmask, while some templates
+    expose a selected block/key or a direct group address.
     """
     mask = 0
     blocks: list[int] = []
     groups: list[int] = []
+    normalised_properties = {
+        _normalise_property_name(name): raw_value
+        for name, raw_value in properties.items()
+    }
     ignored_tokens = (
         "enable",
         "interval",
@@ -165,7 +177,23 @@ def _light_level_broadcast_programming(
         else:
             for value in values:
                 mask |= value & 0xFF
-    return {"mask": mask, "blocks": blocks, "groups": groups}
+
+    # Modern 5753L projects do not put "light level" in either property name.
+    # BroadcastActive is a flags value; bit 0x04 activates Light Level Broadcast
+    # and BroadcastBlock is the zero-based GroupAddress block to publish to.
+    active_values = _hex_values(normalised_properties.get("broadcastactive"))
+    if any(value & TOOLKIT_LIGHT_LEVEL_BROADCAST_ACTIVE_FLAG for value in active_values):
+        blocks.extend(
+            value
+            for value in _hex_values(normalised_properties.get("broadcastblock"))
+            if 0 <= value < 8
+        )
+
+    return {
+        "mask": mask,
+        "blocks": sorted(set(blocks)),
+        "groups": sorted(set(groups)),
+    }
 
 
 def _has_light_level_broadcast_programming(

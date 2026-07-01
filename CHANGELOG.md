@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.2
+
+- Fixed modern Toolkit 5753L/SENPIRIB Light Level Broadcast detection. These projects store the feature as `BroadcastActive = 0x4` plus a zero-based `BroadcastBlock`, rather than using property names containing “light level”.
+- Resolves `BroadcastBlock` through the unit's `GroupAddress` array and application selection, then marks that exact group as an illuminance sensor.
+- Validated against a real modern Toolkit CBZ containing 43 programmed Light Level Broadcast groups; all 43 are detected as `sensor` entities rather than `light` entities.
+- Ignores `BroadcastBlock` when the Light Level Broadcast active flag is not set.
+- Added regression coverage for both modern SQLite Toolkit projects and fetched/legacy XML project data.
+
 ## 0.4.1
 
 - Fixed Light Level Broadcast groups still appearing as lights when their application was mapped to `light` or another broad entity type.

@@ -85,13 +85,15 @@ def test_parse_modern_cbz(tmp_path: Path) -> None:
         INSERT INTO property VALUES
             (1,NULL,'Application','0x38 0xff'),
             (2,NULL,'GroupAddress','0x1 0x3 0xff 0xff 0xff 0xff 0xff 0xff'),
-            (3,NULL,'LightLevelBroadcast','0x2'),
-            (4,NULL,'SecondApplicationBlocks','0x0');
+            (3,NULL,'BroadcastActive','0x4'),
+            (4,NULL,'BroadcastBlock','0x1'),
+            (5,NULL,'SecondApplicationBlocks','0x0');
         INSERT INTO pp_properties VALUES
             (1,1,1),
             (2,2,1),
             (3,3,1),
-            (4,4,1);
+            (4,4,1),
+            (5,5,1);
         """
     )
     connection.commit()
@@ -187,3 +189,34 @@ def test_light_level_broadcast_selected_block_property() -> None:
     unit = project["networks"][0]["units"][0]
     assert unit["light_level_broadcast_groups"][0]["block"] == 1
     assert unit["light_level_broadcast_groups"][0]["group"] == 3
+
+
+def test_toolkit_broadcastactive_block_property() -> None:
+    xml = XML.replace(
+        b"<PP Name='LightLevelBroadcast' Value='0x2'/>",
+        b"<PP Name='BroadcastActive' Value='0x4'/>"
+        b"<PP Name='BroadcastBlock' Value='0x1'/>",
+    )
+    project = parse_project_bytes(xml, "TEST.xml", "xml")
+
+    unit = project["networks"][0]["units"][0]
+    assert unit["light_level_broadcast_groups"][0]["block"] == 1
+    assert unit["light_level_broadcast_groups"][0]["group"] == 3
+    group = project["networks"][0]["applications"][0]["groups"][2]
+    assert group["light_level_broadcast"] is True
+    assert group["suggested_platform"] == "sensor"
+
+
+def test_toolkit_broadcastblock_is_ignored_when_light_level_broadcast_is_inactive() -> None:
+    xml = XML.replace(
+        b"<PP Name='LightLevelBroadcast' Value='0x2'/>",
+        b"<PP Name='BroadcastActive' Value='0x0'/>"
+        b"<PP Name='BroadcastBlock' Value='0x1'/>",
+    )
+    project = parse_project_bytes(xml, "TEST.xml", "xml")
+
+    unit = project["networks"][0]["units"][0]
+    assert unit["light_level_broadcast_groups"] == []
+    group = project["networks"][0]["applications"][0]["groups"][2]
+    assert "light_level_broadcast" not in group
+

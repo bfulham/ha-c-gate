@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1
+
+- Added the missing `options.step.init.menu_options` translations for the four-item **Configure** menu: Hub connections, Application mappings, Group overrides, and Performance and discovery.
+- Regenerated the runtime `translations/en.json` file from the corrected translation source so setup, reconfigure, and options-flow labels remain synchronized.
+
 ## 0.3.0
 
 - Added direct Toolkit project import from a running C-Gate server using the `DBGETXML` command.

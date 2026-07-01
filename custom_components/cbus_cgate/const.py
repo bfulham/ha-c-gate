@@ -4,7 +4,7 @@ from __future__ import annotations
 
 DOMAIN = "cbus_cgate"
 NAME = "C-Bus C-Gate"
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 
 PLATFORMS: list[str] = [
     "binary_sensor",

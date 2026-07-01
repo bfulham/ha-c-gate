@@ -101,6 +101,16 @@
   },
   "options": {
     "step": {
+      "init": {
+        "title": "C-Bus C-Gate settings",
+        "description": "Choose which part of the integration to configure.",
+        "menu_options": {
+          "connections": "Hub connections",
+          "applications": "Application mappings",
+          "groups": "Group overrides",
+          "performance": "Performance and discovery"
+        }
+      },
       "connections": {
         "title": "Hub connections",
         "description": "Choose a CNI/network hub to edit.",

@@ -4,8 +4,9 @@ A native Home Assistant integration for Clipsal/Schneider Electric C-Bus install
 
 It is designed to work with the companion C-Gate Server Home Assistant app or an existing C-Gate installation. It does not use MQTT and it never opens a CNI directly.
 
-## v0.3.0 features
+## v0.3.1 features
 
+- Restores all translated labels in setup, reconfigure, and Configure menus for custom-integration installs.
 - Fetches the project currently loaded by C-Gate directly over the command port using `DBGETXML`; no Toolkit backup upload is required.
 - Manual import of legacy Toolkit `.cbz`/`.xml` projects and modern C-Gate 3 `.cbz`/`.db` projects remains available as a fallback.
 - Setup validates C-Gate but can continue while C-Gate is offline.

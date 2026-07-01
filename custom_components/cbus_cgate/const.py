@@ -1,0 +1,101 @@
+"""Constants for the C-Bus C-Gate integration."""
+
+from __future__ import annotations
+
+DOMAIN = "cbus_cgate"
+NAME = "C-Bus C-Gate"
+VERSION = "0.1.0"
+
+PLATFORMS: list[str] = [
+    "binary_sensor",
+    "button",
+    "cover",
+    "light",
+    "sensor",
+    "switch",
+]
+
+CONF_PROJECT_FILE = "project_file"
+CONF_PROJECT_KEY = "project_key"
+CONF_PROJECT_NAME = "project_name"
+CONF_PROJECT_ID = "project_id"
+CONF_PROJECT_HASH = "project_hash"
+CONF_INSTALLATION_ID = "installation_id"
+CONF_HOST = "host"
+CONF_COMMAND_PORT = "command_port"
+CONF_EVENT_PORT = "event_port"
+CONF_STATUS_PORT = "status_port"
+CONF_CONFIG_PORT = "config_port"
+CONF_ENABLED = "enabled"
+CONF_AUTO_OPEN = "auto_open"
+CONF_CONTINUE_OFFLINE = "continue_offline"
+CONF_INCLUDE_INTERNAL = "include_internal"
+CONF_COMMAND_POOL_SIZE = "command_pool_size"
+CONF_OPTIMISTIC = "optimistic"
+CONF_HUB_CONNECTIONS = "hub_connections"
+CONF_APPLICATION_MAPPINGS = "application_mappings"
+CONF_APPLICATION_OVERRIDES = "application_overrides"
+CONF_GROUP_OVERRIDES = "group_overrides"
+CONF_NETWORK = "network"
+CONF_APPLICATION = "application"
+CONF_GROUP = "group"
+CONF_ENTITY_TYPE = "entity_type"
+
+DEFAULT_HOST = "homeassistant.local"
+DEFAULT_COMMAND_PORT = 20023
+DEFAULT_EVENT_PORT = 20024
+DEFAULT_STATUS_PORT = 20025
+DEFAULT_CONFIG_PORT = 20026
+DEFAULT_COMMAND_POOL_SIZE = 4
+DEFAULT_INCLUDE_INTERNAL = False
+DEFAULT_OPTIMISTIC = True
+DEFAULT_AUTO_OPEN = True
+DEFAULT_KEEPALIVE = 30
+DEFAULT_RECONNECT_MIN = 2
+DEFAULT_RECONNECT_MAX = 60
+
+TYPE_AUTO = "auto"
+TYPE_LIGHT = "light"
+TYPE_SWITCH = "switch"
+TYPE_BINARY_SENSOR = "binary_sensor"
+TYPE_SENSOR = "sensor"
+TYPE_COVER = "cover"
+TYPE_IGNORE = "ignore"
+ENTITY_TYPES = (
+    TYPE_AUTO,
+    TYPE_LIGHT,
+    TYPE_SWITCH,
+    TYPE_BINARY_SENSOR,
+    TYPE_SENSOR,
+    TYPE_COVER,
+    TYPE_IGNORE,
+)
+
+PROJECT_STORE_VERSION = 1
+PROJECT_STORE_PREFIX = f"{DOMAIN}.project"
+
+EVENT_CBUS = "cbus_cgate_event"
+
+# C-Bus Measurement Application unit codes.
+UNIT_CODE_CELSIUS = 0x00
+UNIT_CODE_AMPS = 0x01
+UNIT_CODE_BOOLEAN = 0x04
+UNIT_CODE_HERTZ = 0x07
+UNIT_CODE_JOULES = 0x08
+UNIT_CODE_LITRES = 0x0C
+UNIT_CODE_LITRES_PER_HOUR = 0x0D
+UNIT_CODE_LITRES_PER_MIN = 0x0E
+UNIT_CODE_LITRES_PER_SEC = 0x0F
+UNIT_CODE_LUX = 0x10
+UNIT_CODE_METRES = 0x11
+UNIT_CODE_METRES_PER_SEC = 0x13
+UNIT_CODE_PERCENT = 0x1A
+UNIT_CODE_PPM = 0x1C
+UNIT_CODE_SECONDS = 0x1E
+UNIT_CODE_MINUTES = 0x1F
+UNIT_CODE_HOURS = 0x20
+UNIT_CODE_VOLTS = 0x24
+UNIT_CODE_WATT_HOURS = 0x25
+UNIT_CODE_WATTS = 0x26
+UNIT_CODE_NO_UNITS = 0xFE
+UNIT_CODE_CUSTOM = 0xFF

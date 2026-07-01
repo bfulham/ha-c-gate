@@ -1,0 +1,133 @@
+{
+  "title": "C-Bus C-Gate",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Import C-Bus Toolkit project",
+        "description": "Upload a Toolkit CBZ, C-Gate DB, or legacy XML project. The file is parsed locally and setup can continue even while C-Gate is offline.",
+        "data": {
+          "project_file": "Toolkit project"
+        }
+      },
+      "connection": {
+        "title": "C-Gate connection",
+        "description": "These settings are applied to every imported hub initially. Each hub can be changed independently after setup.\n\n{project_summary}",
+        "data": {
+          "host": "C-Gate host",
+          "command_port": "Command port",
+          "event_port": "Event port",
+          "status_port": "Status Change port (0 uses command fallback)",
+          "config_port": "Config Change port",
+          "auto_open": "Open C-Bus networks automatically"
+        }
+      },
+      "connection_failed": {
+        "title": "C-Gate validation failed",
+        "description": "The project was imported successfully, but the connection test failed:\n\n{connection_error}\n\nYou can continue and the integration will reconnect in the background.",
+        "data": {
+          "continue_offline": "Continue without a working connection"
+        }
+      },
+      "confirm": {
+        "title": "Confirm C-Bus project",
+        "description": "{summary}\n\nInitial C-Gate endpoint: **{connection}**\n\nApplication mappings can be changed from Configure after setup.",
+        "data": {}
+      },
+      "reconfigure": {
+        "title": "Update Toolkit project",
+        "description": "Upload a newer CBZ, DB, or XML project. Address-based entity IDs are preserved.",
+        "data": {
+          "project_file": "Updated Toolkit project"
+        }
+      },
+      "reconfigure_confirm": {
+        "title": "Apply project update",
+        "description": "{summary}",
+        "data": {}
+      }
+    },
+    "error": {
+      "invalid_project": "The uploaded file is not a valid supported C-Bus Toolkit project"
+    },
+    "abort": {
+      "already_configured": "This C-Bus project is already configured",
+      "reconfigure_successful": "The Toolkit project was updated"
+    }
+  },
+  "options": {
+    "step": {
+      "connections": {
+        "title": "Hub connections",
+        "description": "Choose a CNI/network hub to edit.",
+        "data": {
+          "network": "Hub"
+        }
+      },
+      "connection": {
+        "title": "Edit hub C-Gate endpoint",
+        "data": {
+          "enabled": "Enable hub",
+          "host": "C-Gate host",
+          "command_port": "Command port",
+          "event_port": "Event port",
+          "status_port": "Status Change port (0 uses command fallback)",
+          "config_port": "Config Change port",
+          "auto_open": "Open this C-Bus network automatically"
+        }
+      },
+      "applications": {
+        "title": "Application mappings",
+        "description": "Choose a network application to map to a Home Assistant entity type.",
+        "data": {
+          "application": "Application"
+        }
+      },
+      "application": {
+        "title": "Map application",
+        "data": {
+          "entity_type": "Entity type"
+        }
+      },
+      "group_application": {
+        "title": "Group overrides",
+        "description": "Choose the application containing the group.",
+        "data": {
+          "application": "Application"
+        }
+      },
+      "group": {
+        "title": "Choose group",
+        "data": {
+          "group": "Group"
+        }
+      },
+      "group_override": {
+        "title": "Override group entity type",
+        "data": {
+          "entity_type": "Entity type"
+        }
+      },
+      "performance": {
+        "title": "Performance and discovery",
+        "data": {
+          "command_pool_size": "Parallel C-Gate command sessions",
+          "optimistic": "Update Home Assistant state immediately after commands",
+          "include_internal": "Include generated/internal Toolkit groups"
+        }
+      }
+    }
+  },
+  "selector": {
+    "entity_type": {
+      "options": {
+        "auto": "Automatic (motion/relay/dimmer inference)",
+        "light": "Light",
+        "switch": "Switch",
+        "binary_sensor": "Binary sensor",
+        "sensor": "Numeric sensor",
+        "cover": "Cover",
+        "ignore": "Ignore"
+      }
+    }
+  }
+}

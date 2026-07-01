@@ -42,7 +42,7 @@ from .const import (
     UNIT_CODE_WATT_HOURS,
     UNIT_CODE_WATTS,
 )
-from .entity import CbusGroupEntity, application_device_info
+from .entity import CbusGroupEntity, application_device_info, short_entity_id
 from .project import is_light_level_group_name, light_level_broadcast_to_lux
 from .runtime import CbusCgateRuntime, GroupDefinition, MeasurementDefinition
 
@@ -162,6 +162,7 @@ class CbusMeasurementSensor(SensorEntity):
             f"{runtime.installation_id}:n{self.key[0]}:a{self.key[1]}:d{self.key[2]}:c{self.key[3]}"
         )
         self._attr_name = self.measurement["name"]
+        self.entity_id = short_entity_id("sensor", self.measurement["name"])
         self._attr_device_info = application_device_info(runtime, self.network, self.application)
         self._unsubscribe = None
 

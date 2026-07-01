@@ -6,9 +6,16 @@ from typing import Any
 
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity
+from homeassistant.util import slugify
 
 from .const import DOMAIN
 from .runtime import CbusCgateRuntime, GroupDefinition, GroupKey
+
+
+def short_entity_id(domain: str, name: str) -> str:
+    """Return an integration-suggested entity ID using only the entity name."""
+    object_id = slugify(name) or "cbus_entity"
+    return f"{domain}.{object_id}"
 
 
 def server_identifier(runtime: CbusCgateRuntime) -> tuple[str, str]:
@@ -87,6 +94,7 @@ class CbusGroupEntity(Entity):
             f"{runtime.installation_id}:n{self.key[0]}:a{self.key[1]}:g{self.key[2]}"
         )
         self._attr_name = self.group["name"]
+        self.entity_id = short_entity_id(definition.entity_type, self.group["name"])
         self._attr_device_info = application_device_info(
             runtime, self.network, self.application
         )

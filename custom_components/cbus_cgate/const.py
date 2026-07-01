@@ -4,7 +4,7 @@ from __future__ import annotations
 
 DOMAIN = "cbus_cgate"
 NAME = "C-Bus C-Gate"
-VERSION = "0.4.5"
+VERSION = "0.4.6"
 
 PLATFORMS: list[str] = [
     "binary_sensor",
@@ -42,6 +42,9 @@ CONF_NETWORK = "network"
 CONF_APPLICATION = "application"
 CONF_GROUP = "group"
 CONF_ENTITY_TYPE = "entity_type"
+CONF_ENTITY_ID_STYLE_VERSION = "entity_id_style_version"
+
+SHORT_ENTITY_ID_STYLE_VERSION = 1
 
 DEFAULT_HOST = "homeassistant.local"
 DEFAULT_COMMAND_PORT = 20023

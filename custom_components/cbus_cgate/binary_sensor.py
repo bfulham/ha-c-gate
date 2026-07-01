@@ -11,7 +11,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
-from .entity import CbusGroupEntity, hub_device_info
+from .entity import CbusGroupEntity, hub_device_info, short_entity_id
 from .project import is_motion_group_name
 from .runtime import CbusCgateRuntime, GroupDefinition
 
@@ -65,6 +65,7 @@ class CbusHubConnectivity(BinarySensorEntity):
         self._attr_unique_id = (
             f"{runtime.installation_id}:n{self.network_address}:connectivity"
         )
+        self.entity_id = short_entity_id("binary_sensor", self._attr_name)
         self._attr_device_info = hub_device_info(runtime, network)
         self._unsubscribe = None
 
@@ -83,7 +84,9 @@ class CbusHubConnectivity(BinarySensorEntity):
             "last_event": state.last_event.isoformat() if state.last_event else None,
             "commands": state.command_count,
             "failed_commands": state.failed_command_count,
-            "status_via_command_fallback": manager.status_stream.using_fallback if manager else None,
+            "status_via_command_fallback": (
+                manager.status_stream.using_fallback if manager else None
+            ),
         }
 
     async def async_added_to_hass(self) -> None:

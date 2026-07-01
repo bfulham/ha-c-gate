@@ -9,7 +9,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
-from .entity import hub_device_info
+from .entity import hub_device_info, short_entity_id
 from .runtime import CbusCgateRuntime
 
 PARALLEL_UPDATES = 0
@@ -51,6 +51,7 @@ class CbusReopenButton(_CbusHubButton):
         self._attr_unique_id = (
             f"{runtime.installation_id}:n{self.network_address}:reopen"
         )
+        self.entity_id = short_entity_id("button", self._attr_name)
 
     async def async_press(self) -> None:
         await self.runtime.reopen_network(self.network_address)
@@ -64,6 +65,7 @@ class CbusResyncButton(_CbusHubButton):
         self._attr_unique_id = (
             f"{runtime.installation_id}:n{self.network_address}:resync"
         )
+        self.entity_id = short_entity_id("button", self._attr_name)
 
     async def async_press(self) -> None:
         await self.runtime.resync_network(self.network_address)

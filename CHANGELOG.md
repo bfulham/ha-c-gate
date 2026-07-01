@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.6
+
+- Changed integration-suggested entity IDs to use only the entity name instead of prefixing the network and application device names. For example, `light.db_l1_1_function_rooms_db_l1_1_function_rooms_green_room` becomes `light.green_room`.
+- Added a one-time entity-registry migration for existing automatically generated IDs while preserving address-based unique IDs.
+- Preserves entity IDs that appear to have been manually customised by the user.
+- Resolves duplicate entity names using Home Assistant's normal numeric suffixes, such as `_2` and `_3`.
+- Applies concise IDs to group entities, Measurement Application sensors, hub connection sensors, and maintenance buttons.
+
 ## 0.4.5
 
 - Added **Hide individual fixtures and show groups only** to **Configure → Performance and discovery**.

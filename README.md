@@ -4,7 +4,7 @@ A native Home Assistant integration for Clipsal/Schneider Electric C-Bus install
 
 It is designed to work with the companion C-Gate Server Home Assistant add-on or an existing C-Gate installation. It does not use MQTT and it never opens a CNI directly.
 
-## v0.4.5 features
+## v0.4.6 features
 
 - Automatically detects a running **C-Gate Server** add-on on Home Assistant installations with Supervisor.
 - Uses the detected add-on's internal hostname, standard ports, and configured Toolkit project name, avoiding manual connection details.
@@ -22,6 +22,7 @@ It is designed to work with the companion C-Gate Server Home Assistant add-on or
 - Uses Status Change Port push updates with an automatic command-port event fallback when port 20025 is unavailable.
 - Provides optimistic UI state followed by authoritative C-Gate status reconciliation.
 - Supports project replacement through **Reconfigure** while preserving address-based unique IDs.
+- Uses concise entity IDs based only on the entity name, such as `light.green_room`, while keeping address-based unique IDs internally.
 - Provides lights, switches, binary sensors, numeric group sensors, covers, and Measurement Application sensors.
 - Provides reopen-network and resynchronise buttons per hub, diagnostics, and automatic reconnects.
 
@@ -164,7 +165,9 @@ Open the integration menu and select **Reconfigure**. The available choices are:
 - **Fetch latest project from another C-Gate server**;
 - **Upload a project file**.
 
-Entity unique IDs use a generated installation ID plus numeric C-Bus addresses, never group names. Renaming a group therefore preserves automations and history.
+Entity unique IDs use a generated installation ID plus numeric C-Bus addresses, never group names. Entity IDs are suggested from only the entity name, so a group named `Green Room` becomes `light.green_room` instead of including the network and application names. When two entities in the same domain have the same name, Home Assistant appends `_2`, `_3`, and so on.
+
+When upgrading to v0.4.6, the integration performs a one-time migration of its existing automatically generated entity IDs. IDs that appear to have been manually customised are left unchanged. Because the visible entity IDs change, review YAML automations, external integrations, and dashboards that contain hard-coded references.
 
 When upgrading from v0.4.2 or earlier, run **Reconfigure → Fetch from detected C-Gate add-on** once. This path downloads the real CBZ/SQLite backup instead of importing `DBGETXML` output, so the `BroadcastActive`, `BroadcastBlock`, and `GroupAddress` properties required for lux detection are retained. On reload, the existing sensor entities update from `%` to `lx`; stale `light.*` registry entries are also removed automatically when a group previously used the light domain.
 

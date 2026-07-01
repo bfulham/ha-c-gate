@@ -139,7 +139,7 @@ _UNIT_INFO: dict[int, tuple[str | None, SensorDeviceClass | None]] = {
 class CbusMeasurementSensor(SensorEntity):
     """A C-Bus Measurement Application channel."""
 
-    _attr_has_entity_name = True
+    _attr_has_entity_name = False
     _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(

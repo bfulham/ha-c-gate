@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.7
+
+- Changed visible entity names to use only the Toolkit group, measurement, connection, or button name instead of Home Assistant prefixing the associated network/application device name.
+- A group named `Green Room` now displays as `Green Room` while remaining attached to its C-Bus application device.
+- Existing user-customised entity names remain unchanged; automatically generated names update when the integration reloads.
+- Applied the same unprefixed naming behaviour to group entities, Measurement Application sensors, hub connection sensors, and maintenance buttons.
+
 ## 0.4.6
 
 - Changed integration-suggested entity IDs to use only the entity name instead of prefixing the network and application device names. For example, `light.db_l1_1_function_rooms_db_l1_1_function_rooms_green_room` becomes `light.green_room`.

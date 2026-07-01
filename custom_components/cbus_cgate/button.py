@@ -29,7 +29,7 @@ async def async_setup_entry(
 
 
 class _CbusHubButton(ButtonEntity):
-    _attr_has_entity_name = True
+    _attr_has_entity_name = False
     _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, runtime: CbusCgateRuntime, network: dict) -> None:

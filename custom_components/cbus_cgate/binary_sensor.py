@@ -53,7 +53,7 @@ class CbusGroupBinarySensor(CbusGroupEntity, BinarySensorEntity):
 class CbusHubConnectivity(BinarySensorEntity):
     """Connection state for one C-Bus network hub."""
 
-    _attr_has_entity_name = True
+    _attr_has_entity_name = False
     _attr_name = "C-Gate connection"
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
     _attr_entity_category = EntityCategory.DIAGNOSTIC

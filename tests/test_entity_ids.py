@@ -95,3 +95,5 @@ def test_group_entity_keeps_address_unique_id_but_suggests_short_entity_id() -> 
 
     assert entity.entity_id == "light.green_room"
     assert entity._attr_unique_id == "installation:n250:a56:g12"
+    assert entity._attr_name == "Green Room"
+    assert entity._attr_has_entity_name is False

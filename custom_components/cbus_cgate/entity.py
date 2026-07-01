@@ -77,7 +77,9 @@ def application_device_info(
 class CbusGroupEntity(Entity):
     """Base entity backed by a C-Bus group."""
 
-    _attr_has_entity_name = True
+    # Keep the visible entity name exactly as the Toolkit group name.
+    # Device context remains available through the device association.
+    _attr_has_entity_name = False
 
     def __init__(self, runtime: CbusCgateRuntime, definition: GroupDefinition) -> None:
         self.runtime = runtime

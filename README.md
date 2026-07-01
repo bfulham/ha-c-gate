@@ -4,13 +4,14 @@ A native Home Assistant integration for Clipsal/Schneider Electric C-Bus install
 
 It is designed to work with the companion C-Gate Server Home Assistant add-on or an existing C-Gate installation. It does not use MQTT and it never opens a CNI directly.
 
-## v0.4.6 features
+## v0.4.7 features
 
 - Automatically detects a running **C-Gate Server** add-on on Home Assistant installations with Supervisor.
 - Uses the detected add-on's internal hostname, standard ports, and configured Toolkit project name, avoiding manual connection details.
 - Downloads the detected add-on's current CBZ backup directly over the internal Supervisor network, preserving modern SQLite Toolkit programming without a manual upload.
 - Manual connection to another C-Gate server and manual import of `.cbz`, `.xml`, and `.db` projects remain available.
 - Creates one Home Assistant hub device per imported C-Bus network/CNI and one child device per populated C-Bus application.
+- Uses the Toolkit entity name as the complete visible Home Assistant name, without adding the network or application device name.
 - Represents motion and light-level values through C-Bus groups on the application device rather than separate physical-sensor devices.
 - Detects groups assigned to a sensor's **Light Level Broadcast** block and exposes them as illuminance sensors in lux.
 - Applies per-hub C-Gate host and command/event/status/config port overrides.
@@ -165,7 +166,7 @@ Open the integration menu and select **Reconfigure**. The available choices are:
 - **Fetch latest project from another C-Gate server**;
 - **Upload a project file**.
 
-Entity unique IDs use a generated installation ID plus numeric C-Bus addresses, never group names. Entity IDs are suggested from only the entity name, so a group named `Green Room` becomes `light.green_room` instead of including the network and application names. When two entities in the same domain have the same name, Home Assistant appends `_2`, `_3`, and so on.
+Entity unique IDs use a generated installation ID plus numeric C-Bus addresses, never group names. Entity IDs are suggested from only the entity name, so a group named `Green Room` becomes `light.green_room` instead of including the network and application names. The visible friendly name is also simply `Green Room`; the application and network remain available through the entity's associated device. When two entities in the same domain have the same name, Home Assistant appends `_2`, `_3`, and so on to entity IDs.
 
 When upgrading to v0.4.6, the integration performs a one-time migration of its existing automatically generated entity IDs. IDs that appear to have been manually customised are left unchanged. Because the visible entity IDs change, review YAML automations, external integrations, and dashboards that contain hard-coded references.
 

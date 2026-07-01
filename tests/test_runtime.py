@@ -58,6 +58,7 @@ runtime_module = _load_module("runtime")
 CgateCommandError = client_module.CgateCommandError
 CgateEndpoint = client_module.CgateEndpoint
 CommandResult = client_module.CommandResult
+CbusCgateRuntime = runtime_module.CbusCgateRuntime
 EndpointManager = runtime_module.EndpointManager
 GroupDefinition = runtime_module.GroupDefinition
 GroupState = runtime_module.GroupState
@@ -194,3 +195,54 @@ async def test_bootstrap_falls_back_when_wildcard_get_is_unsupported(
     assert runtime.group_states[(254, 56, 1)].level == 10
     assert runtime.group_states[(254, 56, 2)].level == 20
     assert manager._wildcard_level_reads is False
+
+
+def test_groups_only_option_filters_individual_dali_fixtures() -> None:
+    class Entry:
+        data = {
+            "installation_id": "test-installation",
+            "application_mappings": {"56": "light"},
+            "application_overrides": {},
+            "group_overrides": {},
+            "hub_connections": {},
+        }
+        options = {"hide_individual_fixtures": True}
+
+    project = {
+        "project_name": "TEST",
+        "networks": [
+            {
+                "address": 254,
+                "name": "Main",
+                "applications": [
+                    {
+                        "address": 56,
+                        "name": "Lighting",
+                        "groups": [
+                            {
+                                "address": 1,
+                                "name": "Individual fitting",
+                                "internal": False,
+                                "individual_fixture": True,
+                                "relay": False,
+                                "output_assigned": False,
+                            },
+                            {
+                                "address": 2,
+                                "name": "DALI group",
+                                "internal": False,
+                                "individual_fixture": False,
+                                "relay": False,
+                                "output_assigned": False,
+                            },
+                        ],
+                        "measurements": [],
+                    }
+                ],
+            }
+        ],
+    }
+
+    runtime = CbusCgateRuntime(None, Entry(), project)  # type: ignore[arg-type]
+
+    assert [definition.group["address"] for definition in runtime.group_definitions] == [2]

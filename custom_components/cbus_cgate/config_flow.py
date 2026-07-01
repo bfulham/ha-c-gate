@@ -63,6 +63,7 @@ from .const import (
     CONF_EVENT_PORT,
     CONF_GROUP,
     CONF_GROUP_OVERRIDES,
+    CONF_HIDE_INDIVIDUAL_FIXTURES,
     CONF_HOST,
     CONF_HUB_CONNECTIONS,
     CONF_INCLUDE_INTERNAL,
@@ -80,6 +81,7 @@ from .const import (
     DEFAULT_COMMAND_PORT,
     DEFAULT_CONFIG_PORT,
     DEFAULT_EVENT_PORT,
+    DEFAULT_HIDE_INDIVIDUAL_FIXTURES,
     DEFAULT_HOST,
     DEFAULT_INCLUDE_INTERNAL,
     DEFAULT_OPTIMISTIC,
@@ -951,6 +953,9 @@ class CbusCgateOptionsFlow(OptionsFlow):
             options[CONF_COMMAND_POOL_SIZE] = int(user_input[CONF_COMMAND_POOL_SIZE])
             options[CONF_OPTIMISTIC] = bool(user_input[CONF_OPTIMISTIC])
             options[CONF_INCLUDE_INTERNAL] = bool(user_input[CONF_INCLUDE_INTERNAL])
+            options[CONF_HIDE_INDIVIDUAL_FIXTURES] = bool(
+                user_input[CONF_HIDE_INDIVIDUAL_FIXTURES]
+            )
             return self.async_create_entry(title="", data=options)
         return self.async_show_form(
             step_id="performance",
@@ -979,6 +984,16 @@ class CbusCgateOptionsFlow(OptionsFlow):
                         default=options.get(
                             CONF_INCLUDE_INTERNAL,
                             self.config_entry.data.get(CONF_INCLUDE_INTERNAL, False),
+                        ),
+                    ): BooleanSelector(),
+                    vol.Required(
+                        CONF_HIDE_INDIVIDUAL_FIXTURES,
+                        default=options.get(
+                            CONF_HIDE_INDIVIDUAL_FIXTURES,
+                            self.config_entry.data.get(
+                                CONF_HIDE_INDIVIDUAL_FIXTURES,
+                                DEFAULT_HIDE_INDIVIDUAL_FIXTURES,
+                            ),
                         ),
                     ): BooleanSelector(),
                 }

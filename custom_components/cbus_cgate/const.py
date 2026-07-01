@@ -4,7 +4,7 @@ from __future__ import annotations
 
 DOMAIN = "cbus_cgate"
 NAME = "C-Bus C-Gate"
-VERSION = "0.4.4"
+VERSION = "0.4.5"
 
 PLATFORMS: list[str] = [
     "binary_sensor",
@@ -31,6 +31,7 @@ CONF_ENABLED = "enabled"
 CONF_AUTO_OPEN = "auto_open"
 CONF_CONTINUE_OFFLINE = "continue_offline"
 CONF_INCLUDE_INTERNAL = "include_internal"
+CONF_HIDE_INDIVIDUAL_FIXTURES = "hide_individual_fixtures"
 CONF_COMMAND_POOL_SIZE = "command_pool_size"
 CONF_OPTIMISTIC = "optimistic"
 CONF_HUB_CONNECTIONS = "hub_connections"
@@ -49,6 +50,7 @@ DEFAULT_STATUS_PORT = 20025
 DEFAULT_CONFIG_PORT = 20026
 DEFAULT_COMMAND_POOL_SIZE = 4
 DEFAULT_INCLUDE_INTERNAL = False
+DEFAULT_HIDE_INDIVIDUAL_FIXTURES = False
 DEFAULT_OPTIMISTIC = True
 DEFAULT_AUTO_OPEN = True
 DEFAULT_KEEPALIVE = 30

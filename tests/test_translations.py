@@ -25,11 +25,13 @@ def test_all_menu_options_have_visible_labels() -> None:
     strings = _load(INTEGRATION / "strings.json")
 
     assert strings["config"]["step"]["user"]["menu_options"] == {
-        "fetch_project": "Fetch from C-Gate",
+        "addon_project": "Use detected C-Gate add-on",
+        "fetch_project": "Fetch from another C-Gate server",
         "upload_project": "Upload a project file",
     }
     assert strings["config"]["step"]["reconfigure"]["menu_options"] == {
-        "reconfigure_fetch": "Fetch latest project from C-Gate",
+        "reconfigure_addon": "Fetch from detected C-Gate add-on",
+        "reconfigure_fetch": "Fetch latest project from another C-Gate server",
         "reconfigure_upload": "Upload a project file",
     }
     assert strings["options"]["step"]["init"]["menu_options"] == {
@@ -38,3 +40,12 @@ def test_all_menu_options_have_visible_labels() -> None:
         "groups": "Group overrides",
         "performance": "Performance and discovery",
     }
+
+
+def test_performance_flow_includes_groups_only_toggle() -> None:
+    strings = _load(INTEGRATION / "strings.json")
+    performance = strings["options"]["step"]["performance"]
+
+    assert performance["data"]["hide_individual_fixtures"] == (
+        "Hide individual fixtures and show groups only"
+    )

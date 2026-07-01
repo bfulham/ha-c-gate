@@ -49,6 +49,34 @@ def test_parse_legacy_cbz(tmp_path: Path) -> None:
     assert broadcast_group["lux_per_level"] == 10
 
 
+def test_parse_legacy_xml_marks_only_individual_dali_targets_as_fixtures() -> None:
+    mapping = ["0xff"] * 256
+    mapping[4] = "0x10"
+    mapping[5] = "0x42"
+    dali_unit = (
+        "<Unit><TagName>DALI Gateway</TagName><Address>2</Address>"
+        "<UnitType>PC_DAL2C</UnitType><CatalogNumber>5502DAL</CatalogNumber>"
+        "<PP Name='Application' Value='0x38'/>"
+        f"<PP Name='CBusToDali' Value='{' '.join(mapping)}'/>"
+        "</Unit>"
+    ).encode()
+    xml = XML.replace(
+        b"</Application>",
+        b"<Group><TagName>Individual Fitting</TagName><Address>4</Address></Group>"
+        b"<Group><TagName>DALI Group</TagName><Address>5</Address></Group>"
+        b"</Application>" + dali_unit,
+    )
+
+    project = parse_project_bytes(xml, "TEST.xml", "xml")
+    groups = {
+        group["address"]: group
+        for group in project["networks"][0]["applications"][0]["groups"]
+    }
+
+    assert groups[4]["individual_fixture"] is True
+    assert groups[5]["individual_fixture"] is False
+
+
 def test_parse_modern_cbz(tmp_path: Path) -> None:
     database = tmp_path / "TEST.db"
     connection = sqlite3.connect(database)
@@ -96,6 +124,24 @@ def test_parse_modern_cbz(tmp_path: Path) -> None:
             (5,5,1);
         """
     )
+    mapping = ["0xff"] * 256
+    mapping[1] = "0x05"  # Individual DALI fitting on line A.
+    mapping[3] = "0x40"  # DALI group on line A.
+    connection.execute(
+        "INSERT INTO tagged_entity VALUES(7,'DALI Gateway','2',NULL,NULL)"
+    )
+    connection.execute(
+        "INSERT INTO unit VALUES(2,NULL,7,1,'PC_DAL2C','DALI',NULL,'1.0',NULL,NULL,NULL,NULL,'5502DAL',NULL,NULL,NULL,NULL,NULL,NULL)"
+    )
+    connection.execute(
+        "INSERT INTO property VALUES(6,NULL,'Application','0x38')"
+    )
+    connection.execute(
+        "INSERT INTO property VALUES(7,NULL,'CBusToDali',?)",
+        (" ".join(mapping),),
+    )
+    connection.execute("INSERT INTO pp_properties VALUES(6,6,2)")
+    connection.execute("INSERT INTO pp_properties VALUES(7,7,2)")
     connection.commit()
     connection.close()
     archive = tmp_path / "TEST.cbz"
@@ -106,6 +152,8 @@ def test_parse_modern_cbz(tmp_path: Path) -> None:
     assert project["db_version"] == "2.3"
     application = project["networks"][0]["applications"][0]
     assert application["groups"][0]["name"] == "Hall Light"
+    assert application["groups"][0]["individual_fixture"] is True
+    assert application["groups"][1]["individual_fixture"] is False
     assert application["groups"][1]["light_level_broadcast"] is True
     assert application["groups"][1]["sensor_kind"] == "illuminance"
     assert application["groups"][1]["native_unit"] == "lx"

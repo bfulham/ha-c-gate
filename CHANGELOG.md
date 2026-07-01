@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.5
+
+- Added **Hide individual fixtures and show groups only** to **Configure → Performance and discovery**.
+- Parses the 5502DAL/PC_DAL2C `CBusToDali` lookup from both modern SQLite CBZ projects and legacy/fetched XML projects.
+- Marks C-Bus addresses targeting individual DALI fittings on line A (`0x00`–`0x3f`) or line B (`0x80`–`0xbf`) as individual fixtures, while retaining DALI group and broadcast targets.
+- Removes existing fixture entities from Home Assistant's entity registry when the option is enabled and recreates them normally if it is disabled later.
+- Validated against the supplied THEBEND project: the Balcony 2 individual Row 1–5 fittings are filtered while `Balcony 2 Front row`, `Balcony 2 Row 2+3`, and `Balcony 2 Row 4+5` remain visible.
+
 ## 0.4.4
 
 - Fixed group entities remaining `unknown` after Home Assistant or C-Gate starts when their C-Bus level had not changed since boot.

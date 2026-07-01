@@ -106,12 +106,12 @@ def _cleanup_changed_group_domains(
     entry: ConfigEntry,
     runtime: CbusCgateRuntime,
 ) -> None:
-    """Remove stale registry entries when a group changes entity domain.
+    """Remove stale domains and fixture entities hidden by groups-only mode.
 
     Home Assistant keys entity-registry entries by entity domain as well as
-    integration platform and unique ID. A group changing from ``light`` to
-    ``sensor`` therefore leaves the old light entry behind unless the
-    integration removes it before the new platform is set up.
+    integration platform and unique ID. A group changing domain therefore
+    leaves the previous entry behind. The registry also needs explicit cleanup
+    when the DALI groups-only option hides an individual fitting.
     """
     expected_domains = {
         (
@@ -120,12 +120,35 @@ def _cleanup_changed_group_domains(
         ): definition.entity_type
         for definition in runtime.group_definitions
     }
+    hidden_fixture_ids = (
+        {
+            (
+                f"{runtime.installation_id}:n{network['address']}:"
+                f"a{application['address']}:g{group['address']}"
+            )
+            for network in runtime.project["networks"]
+            for application in network["applications"]
+            for group in application["groups"]
+            if group.get("individual_fixture", False)
+        }
+        if runtime.hide_individual_fixtures
+        else set()
+    )
+
     entity_registry = er.async_get(hass)
+    group_unique_id = re.compile(
+        rf"^{re.escape(runtime.installation_id)}:n\d+:a\d+:g\d+$"
+    )
     for entity_entry in er.async_entries_for_config_entry(
         entity_registry, entry.entry_id
     ):
+        if not group_unique_id.fullmatch(entity_entry.unique_id):
+            continue
         expected_domain = expected_domains.get(entity_entry.unique_id)
-        if expected_domain is None or entity_entry.domain == expected_domain:
+        domain_changed = (
+            expected_domain is not None and entity_entry.domain != expected_domain
+        )
+        if not domain_changed and entity_entry.unique_id not in hidden_fixture_ids:
             continue
         entity_registry.async_remove(entity_entry.entity_id)
 

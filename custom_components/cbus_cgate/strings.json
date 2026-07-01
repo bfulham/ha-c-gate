@@ -188,7 +188,12 @@
         "data": {
           "command_pool_size": "Parallel C-Gate command sessions",
           "optimistic": "Update Home Assistant state immediately after commands",
-          "include_internal": "Include generated/internal Toolkit groups"
+          "include_internal": "Include generated/internal Toolkit groups",
+          "hide_individual_fixtures": "Hide individual fixtures and show groups only"
+        },
+        "description": "Tune C-Gate command handling and choose which Toolkit lighting addresses are exposed.",
+        "data_description": {
+          "hide_individual_fixtures": "Hides C-Bus group addresses mapped by a DALI gateway to individual fittings. DALI group and broadcast addresses, relay groups, motion groups, and sensors remain visible."
         }
       }
     }

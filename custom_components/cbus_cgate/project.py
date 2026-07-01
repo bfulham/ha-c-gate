@@ -119,6 +119,23 @@ def is_light_level_group_name(name: str) -> bool:
     return any(token in lower for token in _LIGHT_LEVEL_NAME_TOKENS)
 
 
+def _dali_individual_fixture_groups(properties: dict[str, str]) -> set[int]:
+    """Return C-Bus group addresses mapped to individual DALI control gear.
+
+    A 5502DAL/PC_DAL2C stores a 256-byte ``CBusToDali`` lookup indexed by
+    C-Bus group address. Values 0x00-0x3f address individual fittings on DALI
+    line A, while 0x80-0xbf address individual fittings on line B. DALI group
+    and broadcast targets use separate ranges and must remain visible when the
+    user chooses a groups-only Home Assistant view.
+    """
+    mapping = _hex_values(properties.get("CBusToDali"))
+    return {
+        group
+        for group, target in enumerate(mapping[:256])
+        if 0 <= target <= 0x3F or 0x80 <= target <= 0xBF
+    }
+
+
 def _normalise_property_name(name: str) -> str:
     return re.sub(r"[^a-z0-9]", "", name.casefold())
 
@@ -552,6 +569,7 @@ def _parse_xml(raw: bytes) -> dict[str, Any]:
         app_use_counts: Counter[int] = Counter()
         relay_groups: set[tuple[int, int]] = set()
         output_groups: set[tuple[int, int]] = set()
+        individual_fixture_groups: set[tuple[int, int]] = set()
         units: list[dict[str, Any]] = []
 
         for unit_el in network_el.findall("Unit"):
@@ -562,6 +580,11 @@ def _parse_xml(raw: bytes) -> dict[str, Any]:
             applications = [value for value in _hex_values(pp.get("Application")) if value != 0xFF]
             groups = _hex_values(pp.get("GroupAddress"))
             app_use_counts.update(applications)
+            for application in applications:
+                individual_fixture_groups.update(
+                    (application, group)
+                    for group in _dali_individual_fixture_groups(pp)
+                )
             unit_address = _safe_int(unit_el.findtext("Address"), -1)
             unit_type = (unit_el.findtext("UnitType") or "").strip().upper()
             catalog = (unit_el.findtext("CatalogNumber") or "").strip().upper()
@@ -630,6 +653,9 @@ def _parse_xml(raw: bytes) -> dict[str, Any]:
                         "internal": is_internal_group(name) or group_address == 255,
                         "relay": relay,
                         "output_assigned": output_assigned,
+                        "individual_fixture": (
+                            app_address, group_address
+                        ) in individual_fixture_groups,
                         "suggested_platform": classify_group(name, relay, output_assigned),
                         "phantom": False,
                     }
@@ -766,6 +792,7 @@ def _parse_sqlite_connection(connection: sqlite3.Connection) -> dict[str, Any]:
         app_use_counts: Counter[int] = Counter()
         relay_groups: set[tuple[int, int]] = set()
         output_groups: set[tuple[int, int]] = set()
+        individual_fixture_groups: set[tuple[int, int]] = set()
         units: list[dict[str, Any]] = []
         for unit_row in unit_rows:
             unit_id = int(unit_row["id"])
@@ -775,6 +802,11 @@ def _parse_sqlite_connection(connection: sqlite3.Connection) -> dict[str, Any]:
             ]
             groups = _hex_values(properties.get("GroupAddress"))
             app_use_counts.update(applications)
+            for application in applications:
+                individual_fixture_groups.update(
+                    (application, group)
+                    for group in _dali_individual_fixture_groups(properties)
+                )
             unit_type = str(unit_row["unit_type"] or "").strip().upper()
             catalog = str(unit_row["catalog_number"] or "").strip().upper()
             is_relay = unit_type.startswith("REL") or "RELAY" in unit_type
@@ -863,6 +895,9 @@ def _parse_sqlite_connection(connection: sqlite3.Connection) -> dict[str, Any]:
                         "internal": is_internal_group(name) or group_address == 255,
                         "relay": relay,
                         "output_assigned": output_assigned,
+                        "individual_fixture": (
+                            app_address, group_address
+                        ) in individual_fixture_groups,
                         "suggested_platform": classify_group(name, relay, output_assigned),
                         "phantom": bool(group_row["phantom"]),
                     }

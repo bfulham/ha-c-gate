@@ -33,6 +33,7 @@ from .const import (
     CONF_COMMAND_POOL_SIZE,
     CONF_ENABLED,
     CONF_GROUP_OVERRIDES,
+    CONF_HIDE_INDIVIDUAL_FIXTURES,
     CONF_HUB_CONNECTIONS,
     CONF_INCLUDE_INTERNAL,
     CONF_INSTALLATION_ID,
@@ -40,6 +41,7 @@ from .const import (
     CONF_PROJECT_NAME,
     DEFAULT_AUTO_OPEN,
     DEFAULT_COMMAND_POOL_SIZE,
+    DEFAULT_HIDE_INDIVIDUAL_FIXTURES,
     DEFAULT_INCLUDE_INTERNAL,
     DEFAULT_KEEPALIVE,
     DEFAULT_OPTIMISTIC,
@@ -656,6 +658,15 @@ class CbusCgateRuntime:
                 entry.data.get(CONF_INCLUDE_INTERNAL, DEFAULT_INCLUDE_INTERNAL),
             )
         )
+        self.hide_individual_fixtures = bool(
+            entry.options.get(
+                CONF_HIDE_INDIVIDUAL_FIXTURES,
+                entry.data.get(
+                    CONF_HIDE_INDIVIDUAL_FIXTURES,
+                    DEFAULT_HIDE_INDIVIDUAL_FIXTURES,
+                ),
+            )
+        )
         self.group_states: defaultdict[GroupKey, GroupState] = defaultdict(GroupState)
         self.measurement_states: defaultdict[MeasurementKey, MeasurementState] = defaultdict(
             MeasurementState
@@ -714,6 +725,11 @@ class CbusCgateRuntime:
             for application in network["applications"]:
                 for group in application["groups"]:
                     if group["internal"] and not self.include_internal:
+                        continue
+                    if (
+                        self.hide_individual_fixtures
+                        and group.get("individual_fixture", False)
+                    ):
                         continue
                     key = (network["address"], application["address"], group["address"])
                     entity_type = self.effective_entity_type(key, group)

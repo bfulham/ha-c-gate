@@ -4,7 +4,7 @@ A native Home Assistant integration for Clipsal/Schneider Electric C-Bus install
 
 It is designed to work with the companion C-Gate Server Home Assistant add-on or an existing C-Gate installation. It does not use MQTT and it never opens a CNI directly.
 
-## v0.4.4 features
+## v0.4.5 features
 
 - Automatically detects a running **C-Gate Server** add-on on Home Assistant installations with Supervisor.
 - Uses the detected add-on's internal hostname, standard ports, and configured Toolkit project name, avoiding manual connection details.
@@ -15,6 +15,7 @@ It is designed to work with the companion C-Gate Server Home Assistant add-on or
 - Detects groups assigned to a sensor's **Light Level Broadcast** block and exposes them as illuminance sensors in lux.
 - Applies per-hub C-Gate host and command/event/status/config port overrides.
 - Supports per-application entity mapping and per-group overrides.
+- Adds a **Hide individual fixtures and show groups only** option that recognises C-Bus addresses mapped by a 5502DAL/PC_DAL2C gateway to individual DALI fittings while retaining DALI group and broadcast addresses.
 - Uses direct C-Gate command and Status Change interfaces; no MQTT bridge.
 - Fetches the current level of every configured group during startup, so groups that have not changed since C-Gate or Home Assistant boot do not remain `unknown`.
 - Uses up to eight persistent command sessions for fast parallel actions.
@@ -141,6 +142,8 @@ Home Assistant does not serialise platform actions (`PARALLEL_UPDATES = 0`). A b
 
 The default pool contains four command sessions. Increase it carefully under **Configure → Performance and discovery**. It is capped at eight.
 
+The same page includes **Hide individual fixtures and show groups only**. When enabled, the integration reads each DALI gateway's `CBusToDali` map and omits addresses targeting individual fittings on either DALI line. Addresses targeting DALI groups or line broadcasts remain available, as do relays, motion groups, illuminance sensors, and non-DALI C-Bus groups. Existing fixture entity-registry entries are removed when the integration reloads.
+
 ## Initial state synchronisation
 
 C-Gate push ports report changes as they occur, but they do not replay every existing group level when Home Assistant connects. The integration therefore performs an authoritative state fetch each time its C-Gate connection starts:
@@ -164,6 +167,8 @@ Open the integration menu and select **Reconfigure**. The available choices are:
 Entity unique IDs use a generated installation ID plus numeric C-Bus addresses, never group names. Renaming a group therefore preserves automations and history.
 
 When upgrading from v0.4.2 or earlier, run **Reconfigure → Fetch from detected C-Gate add-on** once. This path downloads the real CBZ/SQLite backup instead of importing `DBGETXML` output, so the `BroadcastActive`, `BroadcastBlock`, and `GroupAddress` properties required for lux detection are retained. On reload, the existing sensor entities update from `%` to `lx`; stale `light.*` registry entries are also removed automatically when a group previously used the light domain.
+
+When upgrading to v0.4.5 and enabling the groups-only option, run **Reconfigure → Fetch from detected C-Gate add-on** once before enabling the toggle. Older stored project models do not contain the `CBusToDali` mapping needed to distinguish individual fittings from DALI groups.
 
 ## Current limitations
 

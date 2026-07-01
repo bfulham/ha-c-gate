@@ -1,156 +1,174 @@
-"""Tests for Toolkit project import."""
+# C-Bus C-Gate for Home Assistant
 
-from __future__ import annotations
+A native Home Assistant integration for Clipsal/Schneider Electric C-Bus installations using **C-Gate** as the runtime backend.
 
-import sqlite3
-from pathlib import Path
-import zipfile
+It is designed to work with the companion C-Gate Server Home Assistant add-on or an existing C-Gate installation. It does not use MQTT and it never opens a CNI directly.
 
-from project import (
-    classify_group,
-    light_level_broadcast_to_lux,
-    parse_project_bytes,
-    parse_project_path,
-)
+## v0.4.1 features
 
+- Automatically detects a running **C-Gate Server** add-on on Home Assistant installations with Supervisor.
+- Uses the detected add-on's internal hostname, standard ports, and configured Toolkit project name, avoiding manual connection details.
+- Fetches the project loaded by C-Gate directly over the command port using `DBGETXML`; no Toolkit backup upload is required.
+- Manual connection to another C-Gate server and manual import of `.cbz`, `.xml`, and `.db` projects remain available.
+- Creates one Home Assistant hub device per imported C-Bus network/CNI and one child device per populated C-Bus application.
+- Represents motion and light-level values through C-Bus groups on the application device rather than separate physical-sensor devices.
+- Detects groups assigned to a sensor's **Light Level Broadcast** block and exposes them as illuminance sensors in lux.
+- Applies per-hub C-Gate host and command/event/status/config port overrides.
+- Supports per-application entity mapping and per-group overrides.
+- Uses direct C-Gate command and Status Change interfaces; no MQTT bridge.
+- Uses up to eight persistent command sessions for fast parallel actions.
+- Uses Status Change Port push updates with an automatic command-port event fallback when port 20025 is unavailable.
+- Provides optimistic UI state followed by authoritative C-Gate status reconciliation.
+- Supports project replacement through **Reconfigure** while preserving address-based unique IDs.
+- Provides lights, switches, binary sensors, numeric group sensors, covers, and Measurement Application sensors.
+- Provides reopen-network and resynchronise buttons per hub, diagnostics, and automatic reconnects.
 
-XML = b"""<?xml version='1.0'?>
-<Installation><DBVersion>1.15.7</DBVersion><Project>
-<OID>project-oid</OID><TagName>TEST</TagName>
-<Network><TagName>Main</TagName><Address>254</Address>
-<Interface><InterfaceType>CNI</InterfaceType><InterfaceAddress>10.0.0.2:10001</InterfaceAddress></Interface>
-<Application><TagName>Lighting</TagName><Address>56</Address>
-<Group><TagName>Hall Light</TagName><Address>1</Address></Group>
-<Group><TagName>Hall Motion</TagName><Address>2</Address></Group>
-<Group><TagName>Broadcast Reading</TagName><Address>3</Address></Group>
-</Application>
-<Unit><TagName>Hall PIR</TagName><Address>20</Address><UnitType>SENPIRIB</UnitType><CatalogNumber>5753L</CatalogNumber><FirmwareVersion>2.4.00</FirmwareVersion>
-<PP Name='Application' Value='0x38 0xff'/><PP Name='GroupAddress' Value='0x2 0x3 0xff 0xff 0xff 0xff 0xff 0xff'/>
-<PP Name='PIRLightMovement' Value='0x1'/><PP Name='PIRDarkMovement' Value='0x1'/><PP Name='SecondApplicationBlocks' Value='0x0'/>
-<PP Name='LightLevelBroadcast' Value='0x2'/>
-</Unit></Network></Project></Installation>"""
+## Device hierarchy
 
+```text
+C-Gate THEBEND
+├── ESS2 Race Control                      (hub / CNI network)
+│   ├── ESS2 Race Control — Lighting       (application 56 groups)
+│   ├── ESS2 Race Control — Measurement    (application 228 channels)
+│   └── C-Gate connection / maintenance
+├── DB-L1-1 Function Rooms                 (hub)
+│   └── ...
+└── ...
+```
 
-def test_parse_legacy_cbz(tmp_path: Path) -> None:
-    archive = tmp_path / "TEST.cbz"
-    with zipfile.ZipFile(archive, "w") as zf:
-        zf.writestr("TEST.xml", XML)
-    project = parse_project_path(archive)
-    assert project["project_name"] == "TEST"
-    assert project["source_format"] == "xml"
-    assert project["networks"][0]["interface"]["host"] == "10.0.0.2"
-    unit = project["networks"][0]["units"][0]
-    assert unit["motion_groups"][0]["group"] == 2
-    assert unit["light_level_broadcast_groups"][0]["group"] == 3
-    broadcast_group = project["networks"][0]["applications"][0]["groups"][2]
-    assert broadcast_group["light_level_broadcast"] is True
-    assert broadcast_group["suggested_platform"] == "sensor"
-    assert broadcast_group["lux_per_level"] == 10
+C-Bus applications are used as logical device boundaries. Every imported group or Measurement Application channel is attached to the child device for its network/application address. Physical PIR and multisensor units are not exposed as separate Home Assistant devices.
 
+When upgrading from v0.1.0, the obsolete physical-unit motion entities and the old per-network Lights/Sensors devices are removed automatically. Automations that referenced a physical-unit motion entity must be changed to the corresponding motion-group binary sensor.
 
-def test_parse_modern_cbz(tmp_path: Path) -> None:
-    database = tmp_path / "TEST.db"
-    connection = sqlite3.connect(database)
-    connection.executescript(
-        """
-        CREATE TABLE tagged_entity(id INTEGER PRIMARY KEY, tag_name TEXT, address TEXT, description TEXT, display_id INTEGER);
-        CREATE TABLE project(id INTEGER PRIMARY KEY, oid TEXT, tagged_entity_id INTEGER);
-        CREATE TABLE installation(id INTEGER PRIMARY KEY, oid TEXT, db_version TEXT, version TEXT, modified INTEGER, project_id INTEGER, installation_detail_id INTEGER);
-        CREATE TABLE network(id INTEGER PRIMARY KEY, oid TEXT, tagged_entity_id INTEGER, project_id INTEGER, network_number TEXT, network_signature TEXT, last_verified INTEGER, _external TEXT);
-        CREATE TABLE interface(id INTEGER PRIMARY KEY, oid TEXT, interface_type TEXT, interface_address TEXT, network_id INTEGER);
-        CREATE TABLE application(id INTEGER PRIMARY KEY, oid TEXT, tagged_entity_id INTEGER, network_id INTEGER);
-        CREATE TABLE _group(id INTEGER PRIMARY KEY, oid TEXT, tagged_entity_id INTEGER, application_id INTEGER, area INTEGER, phantom INTEGER, snapshot_id INTEGER, tags_dlt_list_id INTEGER, nac_dali_duration_test_timeout TEXT);
-        CREATE TABLE unit(id INTEGER PRIMARY KEY, oid TEXT, tagged_entity_id INTEGER, network_id INTEGER, unit_type TEXT, unit_name TEXT, serial_number TEXT, firmware_version TEXT, firmware_version2 TEXT, last_modified INTEGER, firmware_checksum TEXT, parameter_checksum TEXT, catalog_number TEXT, burden_enabled INTEGER, switchable_power_supply_enabled INTEGER, patch_version TEXT, snapshot_id INTEGER, device_name TEXT, group_number TEXT);
-        CREATE TABLE property(id INTEGER PRIMARY KEY, oid TEXT, name TEXT, value TEXT);
-        CREATE TABLE pp_properties(id INTEGER PRIMARY KEY, property_id INTEGER, unit_id INTEGER);
-        CREATE TABLE device(id INTEGER PRIMARY KEY, oid TEXT, tagged_entity_id INTEGER, application_id INTEGER);
-        CREATE TABLE channel(id INTEGER PRIMARY KEY, oid TEXT, tagged_entity_id INTEGER, device_id INTEGER, time_out_period TEXT, units_type TEXT);
-        INSERT INTO tagged_entity VALUES
-            (1,'TEST',NULL,NULL,NULL),
-            (2,'Main','254',NULL,NULL),
-            (3,'Lighting','56',NULL,NULL),
-            (4,'Hall Light','1',NULL,NULL),
-            (5,'Hall PIR','20',NULL,NULL),
-            (6,'Broadcast Reading','3',NULL,NULL);
-        INSERT INTO project VALUES(1,'project-oid',1);
-        INSERT INTO installation VALUES(1,NULL,'2.3',NULL,0,1,1);
-        INSERT INTO network VALUES(1,NULL,2,1,'254',NULL,NULL,NULL);
-        INSERT INTO interface VALUES(1,NULL,'CNI','10.0.0.2:10001',1);
-        INSERT INTO application VALUES(1,NULL,3,1);
-        INSERT INTO _group VALUES
-            (1,NULL,4,1,NULL,0,NULL,NULL,NULL),
-            (2,NULL,6,1,NULL,0,NULL,NULL,NULL);
-        INSERT INTO unit VALUES(1,NULL,5,1,'SENPIRIB','PIR',NULL,'2.4.00',NULL,NULL,NULL,NULL,'5753L',NULL,NULL,NULL,NULL,NULL,NULL);
-        INSERT INTO property VALUES
-            (1,NULL,'Application','0x38 0xff'),
-            (2,NULL,'GroupAddress','0x1 0x3 0xff 0xff 0xff 0xff 0xff 0xff'),
-            (3,NULL,'LightLevelBroadcast','0x2'),
-            (4,NULL,'SecondApplicationBlocks','0x0');
-        INSERT INTO pp_properties VALUES
-            (1,1,1),
-            (2,2,1),
-            (3,3,1),
-            (4,4,1);
-        """
-    )
-    connection.commit()
-    connection.close()
-    archive = tmp_path / "TEST.cbz"
-    with zipfile.ZipFile(archive, "w") as zf:
-        zf.write(database, "TEST.db")
-    project = parse_project_path(archive)
-    assert project["source_format"] == "sqlite"
-    assert project["db_version"] == "2.3"
-    application = project["networks"][0]["applications"][0]
-    assert application["groups"][0]["name"] == "Hall Light"
-    assert application["groups"][1]["light_level_broadcast"] is True
-    assert application["groups"][1]["suggested_platform"] == "sensor"
+## Installation with HACS
 
+1. In HACS, open **Integrations**.
+2. Add `https://github.com/bfulham/ha-c-gate` as a custom repository of type **Integration**.
+3. Install **C-Bus C-Gate**.
+4. Restart Home Assistant.
+5. Open **Settings → Devices & services → Add integration → C-Bus C-Gate**.
+6. Choose **Use detected C-Gate add-on** when it is offered.
 
-def test_group_classification_uses_groups_for_sensor_values() -> None:
-    assert classify_group("Hall Motion", relay=False, output_assigned=False) == "binary_sensor"
-    assert classify_group("Hall Light Level", relay=False, output_assigned=False) == "sensor"
-    assert classify_group("Hall Light Level", relay=False, output_assigned=True) == "light"
+Manual installation is also possible by copying `custom_components/cbus_cgate` into `/config/custom_components`.
 
+## Initial setup
 
-def test_parse_project_bytes_from_cgate_xml() -> None:
-    project = parse_project_bytes(XML, "TEST.xml (fetched from C-Gate)", "xml")
-    assert project["project_name"] == "TEST"
-    assert project["source_name"] == "TEST.xml (fetched from C-Gate)"
-    assert project["source_format"] == "xml"
+### Detected C-Gate Server add-on
 
+1. Install and start the companion C-Gate Server add-on.
+2. Upload/load the Toolkit project in the add-on and configure its `project_name` option.
+3. Add this integration and choose **Use detected C-Gate add-on**.
+4. Confirm the detected add-on and project name.
+5. The integration uses the add-on's Supervisor-network hostname and standard C-Gate ports automatically, fetches the project, and presents the import summary.
 
-def test_light_level_broadcast_level_converts_to_lux() -> None:
-    assert light_level_broadcast_to_lux(0) == 0
-    assert light_level_broadcast_to_lux(49) == 490
-    assert light_level_broadcast_to_lux(255) == 2550
+Only running add-ons are offered. If Supervisor is not available, the detected-add-on option is omitted and the manual paths remain available.
 
+### Another C-Gate server
 
-def test_light_level_broadcast_direct_group_detects_unknown_unit_type() -> None:
-    xml = XML.replace(
-        b"<UnitType>SENPIRIB</UnitType><CatalogNumber>5753L</CatalogNumber>",
-        b"<UnitType>CUSTOM_SENSOR</UnitType><CatalogNumber>UNKNOWN</CatalogNumber>",
-    ).replace(
-        b"<PP Name='LightLevelBroadcast' Value='0x2'/>",
-        b"<PP Name='AmbientLightBroadcastGroupAddress' Value='0x3'/>",
-    )
-    project = parse_project_bytes(xml, "TEST.xml", "xml")
+Choose **Fetch from another C-Gate server**, then enter:
 
-    unit = project["networks"][0]["units"][0]
-    assert unit["supports_illuminance"] is False
-    assert unit["light_level_broadcast_groups"][0]["group"] == 3
-    group = project["networks"][0]["applications"][0]["groups"][2]
-    assert group["light_level_broadcast"] is True
-    assert group["suggested_platform"] == "sensor"
+- the exact C-Gate project name;
+- the server hostname or IP address;
+- command port `20023` unless changed;
+- event, status, and config-change ports if different from the defaults.
 
+The integration runs `PROJECT USE <name>` and `DBGETXML //<name>/`, then parses the returned XML locally.
 
-def test_light_level_broadcast_selected_block_property() -> None:
-    xml = XML.replace(
-        b"<PP Name='LightLevelBroadcast' Value='0x2'/>",
-        b"<PP Name='IlluminanceBroadcastBlock' Value='0x1'/>",
-    )
-    project = parse_project_bytes(xml, "TEST.xml", "xml")
+### Manual upload fallback
 
-    unit = project["networks"][0]["units"][0]
-    assert unit["light_level_broadcast_groups"][0]["block"] == 1
-    assert unit["light_level_broadcast_groups"][0]["group"] == 3
+Choose **Upload a project file** when C-Gate is offline or unreachable during setup. Supported files are:
+
+- Toolkit 1.16 and earlier: CBZ containing XML;
+- Toolkit 1.17 and later/C-Gate 3: CBZ containing a SQLite DB;
+- raw `.xml` and `.db` files.
+
+After upload, enter the C-Gate endpoint. If validation fails, setup can continue offline and the integration reconnects in the background.
+
+## Entity type detection
+
+Default application mappings are intentionally conservative:
+
+| Application | Default |
+|---|---|
+| 48–127 | Automatic lighting-family inference |
+| 200 | Numeric sensor |
+| 203 | Switch |
+| 228 | Measurement sensor |
+| Other applications | Ignored |
+
+Under **Automatic**, the integration applies these rules:
+
+- a group assigned to a unit's **Light Level Broadcast** block becomes an illuminance sensor;
+- motion/occupancy/PIR-named groups without an output become motion binary sensors;
+- light-level/ambient-light/illuminance/lux-named groups without an output become numeric percentage sensors when no broadcast programming was found;
+- relay and enable/disable control groups become switches;
+- other groups become lights.
+
+Light Level Broadcast detection takes precedence over the broad network/application mapping, so a broadcast group remains a lux sensor even when its application is mapped as lights. Any individual group can still be overridden separately; an explicit concrete group override takes precedence. Selecting `auto` for a group runs the normal inference rules.
+
+### Light Level Broadcast values
+
+Toolkit programming is inspected to identify the virtual key/block or group used for Light Level Broadcast. The importer accepts common bitmask, selected-block/key, and direct-group property layouts.
+
+A detected broadcast group is exposed with:
+
+- Home Assistant device class: **Illuminance**;
+- native unit: `lx`;
+- value: C-Bus group level × 10;
+- attributes: raw C-Bus level and the conversion scale.
+
+For example, raw level `49` is represented as `490 lx`. Groups whose names contain “light level”, “ambient light”, “illuminance”, or “lux” remain percentage sensors unless Toolkit programming marks them as the broadcast destination. They are never exposed as controllable lights merely because Toolkit also references the address from an output-capable unit.
+
+## C-Gate requirements
+
+The C-Gate project must exist on the selected server. Direct project fetch requires **Program** access because it uses `DBGETXML`; normal runtime control requires **Operate** or **Program** access.
+
+The integration uses:
+
+- command port `20023`;
+- event port `20024`;
+- Status Change port `20025`;
+- config-change port `20026`.
+
+If Status Change port `20025` is unavailable, the integration opens a separate command session and enables `EVENT e0s1c0` for push updates.
+
+The C-Gate `access.txt` file must allow the Home Assistant host/container address at **Operate** or **Program** level.
+
+## Fast control design
+
+Home Assistant does not serialise platform actions (`PARALLEL_UPDATES = 0`). A bounded pool of persistent C-Gate command sessions executes simultaneous service calls concurrently. Status traffic uses a separate connection, so command responses cannot block physical-switch updates.
+
+The default pool contains four command sessions. Increase it carefully under **Configure → Performance and discovery**. It is capped at eight.
+
+## Updating the Toolkit project
+
+Open the integration menu and select **Reconfigure**. The available choices are:
+
+- **Fetch from detected C-Gate add-on**;
+- **Fetch latest project from another C-Gate server**;
+- **Upload a project file**.
+
+Entity unique IDs use a generated installation ID plus numeric C-Bus addresses, never group names. Renaming a group therefore preserves automations and history.
+
+After upgrading an existing entry from before v0.4.0, run **Reconfigure → Fetch from detected C-Gate add-on** or upload the latest project once. This reparses the unit programming needed to identify Light Level Broadcast groups. Upgrading from v0.4.0 to v0.4.1 only requires a Home Assistant restart; stale `light.*` registry entries are removed automatically when their replacement `sensor.*` entities are created.
+
+## Current limitations
+
+- The integration maps common group-oriented applications and Measurement Application events. It does not yet implement native HVAC, Trigger Control, Enable Control selectors, scenes, or every specialised C-Bus application.
+- Covers are represented as one 0–255 position group. Paired up/down relay covers need a future composite-device mapping.
+- Light Level Broadcast conversion uses the C-Bus broadcast scale of 10 lux per group level. It does not poll physical Unit Parameters directly.
+- A project can contain networks that are offline or use interfaces unavailable to the C-Gate host; those hubs remain unavailable without blocking other hubs.
+- Direct `DBGETXML` fetch imports XML applications, groups, units, and programming properties. Measurement Application device/channel definitions from a modern SQLite Toolkit database still require the manual CBZ/DB import path.
+- The included parser and mocked protocol tests pass; live validation against the add-on and a real C-Gate project is still required.
+
+## Debug logging
+
+```yaml
+logger:
+  logs:
+    custom_components.cbus_cgate: debug
+```
+
+## License
+
+MIT. Schneider Electric C-Gate is proprietary software and is not included with this repository.

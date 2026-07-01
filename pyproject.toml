@@ -1,43 +1,15 @@
-"""Tests for Home Assistant add-on discovery."""
+[project]
+name = "ha-cbus-cgate"
+version = "0.4.1"
+requires-python = ">=3.13"
 
-from __future__ import annotations
+[tool.pytest.ini_options]
+pythonpath = ["custom_components/cbus_cgate"]
+testpaths = ["tests"]
 
-from addon import detect_cgate_addons, is_cgate_addon
+[tool.ruff]
+target-version = "py313"
+line-length = 100
 
-
-def test_detects_running_repository_prefixed_addon() -> None:
-    addons = detect_cgate_addons(
-        {
-            "abc123_cgate_server": {
-                "name": "C-Gate Server",
-                "state": "started",
-                "options": {"project_name": "THEBEND"},
-            },
-            "other": {
-                "name": "Other add-on",
-                "state": "started",
-                "options": {},
-            },
-        }
-    )
-
-    assert len(addons) == 1
-    assert addons[0].slug == "abc123_cgate_server"
-    assert addons[0].host == "abc123-cgate-server"
-    assert addons[0].project_name == "THEBEND"
-
-
-def test_ignores_stopped_cgate_addon() -> None:
-    assert detect_cgate_addons(
-        {
-            "cgate_server": {
-                "name": "C-Gate Server",
-                "state": "stopped",
-                "options": {"project_name": "TEST"},
-            }
-        }
-    ) == []
-
-
-def test_name_match_supports_renamed_slug() -> None:
-    assert is_cgate_addon("local_custom_slug", {"name": "C-Gate Server"})
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]

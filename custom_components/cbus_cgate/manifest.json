@@ -1,7 +1,9 @@
 {
   "domain": "cbus_cgate",
   "name": "C-Bus C-Gate",
-  "after_dependencies": [],
+  "after_dependencies": [
+    "hassio"
+  ],
   "codeowners": [
     "@bfulham"
   ],
@@ -11,5 +13,5 @@
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/bfulham/ha-c-gate/issues",
   "requirements": [],
-  "version": "0.3.1"
+  "version": "0.4.1"
 }

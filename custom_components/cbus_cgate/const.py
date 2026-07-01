@@ -4,7 +4,7 @@ from __future__ import annotations
 
 DOMAIN = "cbus_cgate"
 NAME = "C-Bus C-Gate"
-VERSION = "0.3.1"
+VERSION = "0.4.1"
 
 PLATFORMS: list[str] = [
     "binary_sensor",
@@ -16,6 +16,7 @@ PLATFORMS: list[str] = [
 ]
 
 CONF_PROJECT_FILE = "project_file"
+CONF_ADDON_SLUG = "addon_slug"
 CONF_PROJECT_KEY = "project_key"
 CONF_PROJECT_NAME = "project_name"
 CONF_PROJECT_ID = "project_id"

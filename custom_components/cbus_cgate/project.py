@@ -26,6 +26,7 @@ ILLUMINANCE_UNIT_TYPES = {"SENPIRIB", "SENLL"}
 ILLUMINANCE_CATALOG_NUMBERS = {"5753L", "5753PEIRL", "5031PE"}
 MOTION_UNIT_TYPES = {"SENPIRIB"}
 MOTION_CATALOG_NUMBERS = {"5753L", "5753PEIRL"}
+LIGHT_LEVEL_BROADCAST_LUX_PER_LEVEL = 10
 _MOTION_NAME_TOKENS = ("motion", "occupancy", "pir")
 _LIGHT_LEVEL_NAME_TOKENS = (
     "light level",
@@ -117,10 +118,155 @@ def is_light_level_group_name(name: str) -> bool:
     return any(token in lower for token in _LIGHT_LEVEL_NAME_TOKENS)
 
 
+def _normalise_property_name(name: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", name.casefold())
+
+
+def _light_level_broadcast_programming(
+    properties: dict[str, str],
+) -> dict[str, list[int] | int]:
+    """Extract light-level broadcast block/group programming from unit properties.
+
+    Toolkit generations have used slightly different property labels. The
+    common invariant is a property containing both the measured quantity and
+    the word ``broadcast``. Most units store a block bitmask, while some
+    templates expose a selected block/key or a direct group address.
+    """
+    mask = 0
+    blocks: list[int] = []
+    groups: list[int] = []
+    ignored_tokens = (
+        "enable",
+        "interval",
+        "period",
+        "rate",
+        "time",
+        "change",
+        "margin",
+        "threshold",
+    )
+    for name, raw_value in properties.items():
+        normalised = _normalise_property_name(name)
+        quantity = any(
+            token in normalised
+            for token in ("lightlevel", "ambientlight", "illuminance", "lux")
+        )
+        if not quantity or "broadcast" not in normalised:
+            continue
+        if any(token in normalised for token in ignored_tokens):
+            continue
+        values = _hex_values(raw_value)
+        if not values:
+            continue
+        if "groupaddress" in normalised or normalised.endswith(("group", "address")):
+            groups.extend(value for value in values if 0 <= value <= 255 and value != 0xFF)
+        elif normalised.endswith(("block", "key")) or "virtualkey" in normalised:
+            blocks.extend(value for value in values if 0 <= value < 8)
+        else:
+            for value in values:
+                mask |= value & 0xFF
+    return {"mask": mask, "blocks": blocks, "groups": groups}
+
+
+def _has_light_level_broadcast_programming(
+    programming: dict[str, list[int] | int],
+) -> bool:
+    """Return whether parsed unit properties select a broadcast destination."""
+    return bool(
+        int(programming.get("mask", 0))
+        or programming.get("blocks")
+        or programming.get("groups")
+    )
+
+
+def _application_for_block(
+    applications: list[int],
+    second_app_mask: int,
+    block: int,
+) -> int | None:
+    if not applications:
+        return None
+    use_second = bool(second_app_mask & (1 << block)) and len(applications) > 1
+    application = applications[1] if use_second else applications[0]
+    return None if application == 0xFF else application
+
+
+def _resolve_light_level_broadcast_groups(
+    unit: dict[str, Any],
+    group_lookup: dict[tuple[int, int], dict[str, Any]],
+) -> list[dict[str, Any]]:
+    applications: list[int] = unit.get("_applications", [])
+    group_addresses: list[int] = unit.get("_group_addresses", [])
+    second_app_mask = int(unit.get("_second_application_blocks", 0))
+    programming = unit.get("_light_level_broadcast", {})
+    mask = int(programming.get("mask", 0)) if isinstance(programming, dict) else 0
+    programmed_blocks = (
+        [int(value) for value in programming.get("blocks", [])]
+        if isinstance(programming, dict)
+        else []
+    )
+    direct_groups = (
+        [int(value) for value in programming.get("groups", [])]
+        if isinstance(programming, dict)
+        else []
+    )
+
+    candidates: list[dict[str, Any]] = []
+
+    def add(application: int | None, group: int, block: int | None, source: str) -> None:
+        if application is None or group == 0xFF:
+            return
+        project_group = group_lookup.get((application, group))
+        if project_group is None:
+            return
+        candidates.append(
+            {
+                "application": application,
+                "group": group,
+                "name": str(project_group.get("name") or f"Group {group}"),
+                "block": block,
+                "source": source,
+            }
+        )
+
+    selected_blocks = {
+        block for block in range(min(8, len(group_addresses))) if mask & (1 << block)
+    }
+    selected_blocks.update(block for block in programmed_blocks if 0 <= block < 8)
+    for block in sorted(selected_blocks):
+        if block >= len(group_addresses):
+            continue
+        add(
+            _application_for_block(applications, second_app_mask, block),
+            group_addresses[block],
+            block,
+            "block",
+        )
+
+    for group in direct_groups:
+        for application in applications:
+            if (application, group) in group_lookup:
+                add(application, group, None, "group")
+                break
+
+    unique: list[dict[str, Any]] = []
+    seen: set[tuple[int, int]] = set()
+    for item in candidates:
+        key = (item["application"], item["group"])
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique
+
+
 def classify_group(name: str, relay: bool, output_assigned: bool) -> str:
     """Infer a conservative default platform for a group."""
     lower = name.casefold()
-    if is_light_level_group_name(name) and not output_assigned:
+    # Light-level groups are input values even when Toolkit also references the
+    # address from an output-capable unit. Treating ``output_assigned`` as a
+    # veto caused sensor broadcast groups to be exposed as controllable lights.
+    if is_light_level_group_name(name):
         return "sensor"
     if is_motion_group_name(name) and "light" not in lower and not output_assigned:
         return "binary_sensor"
@@ -136,6 +282,43 @@ def classify_group(name: str, relay: bool, output_assigned: bool) -> str:
     ):
         return "switch"
     return "light"
+
+
+def effective_group_platform(
+    group: dict[str, Any],
+    application_mapping: str,
+    group_override: str | None = None,
+) -> str:
+    """Resolve a group's final Home Assistant platform.
+
+    A per-group override remains authoritative when it selects a concrete
+    platform. ``auto`` means inference, not a platform in its own right. Light
+    Level Broadcast metadata must take precedence over the broad application
+    mapping so a lighting application mapped as ``light`` cannot turn an
+    illuminance value into a controllable light entity. An ignored application
+    remains ignored unless the group itself is explicitly set to ``auto``.
+    """
+    if group_override and group_override != "auto":
+        return group_override
+    if application_mapping == "ignore" and group_override != "auto":
+        return "ignore"
+    if group.get("light_level_broadcast"):
+        return "sensor"
+    if application_mapping == "auto" or group_override == "auto":
+        return classify_group(
+            str(group.get("name") or ""),
+            bool(group.get("relay")),
+            bool(group.get("output_assigned")),
+        )
+    return application_mapping
+
+
+def light_level_broadcast_to_lux(
+    level: int,
+    lux_per_level: int = LIGHT_LEVEL_BROADCAST_LUX_PER_LEVEL,
+) -> int:
+    """Convert a C-Bus light-level broadcast group level to illuminance."""
+    return max(0, min(255, int(level))) * int(lux_per_level)
 
 
 def default_application_mapping(application: int) -> str:
@@ -155,11 +338,11 @@ def _resolve_motion_groups(
     unit: dict[str, Any],
     group_lookup: dict[tuple[int, int], dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    applications: list[int] = unit.pop("_applications", [])
-    groups: list[int] = unit.pop("_group_addresses", [])
-    light_mask = int(unit.pop("_pir_light_movement", 0))
-    dark_mask = int(unit.pop("_pir_dark_movement", 0))
-    second_app_mask = int(unit.pop("_second_application_blocks", 0))
+    applications: list[int] = unit.get("_applications", [])
+    groups: list[int] = unit.get("_group_addresses", [])
+    light_mask = int(unit.get("_pir_light_movement", 0))
+    dark_mask = int(unit.get("_pir_dark_movement", 0))
+    second_app_mask = int(unit.get("_second_application_blocks", 0))
 
     if not applications or not groups:
         return []
@@ -335,9 +518,20 @@ def _parse_xml(raw: bytes) -> dict[str, Any]:
                         relay_groups.add((application, group))
 
             if 0 <= unit_address <= 255:
-                supports_illuminance = unit_type in ILLUMINANCE_UNIT_TYPES or catalog in ILLUMINANCE_CATALOG_NUMBERS
-                supports_motion = unit_type in MOTION_UNIT_TYPES or catalog in MOTION_CATALOG_NUMBERS
-                if supports_illuminance or supports_motion:
+                supports_illuminance = (
+                    unit_type in ILLUMINANCE_UNIT_TYPES
+                    or catalog in ILLUMINANCE_CATALOG_NUMBERS
+                )
+                supports_motion = (
+                    unit_type in MOTION_UNIT_TYPES
+                    or catalog in MOTION_CATALOG_NUMBERS
+                )
+                light_level_broadcast = _light_level_broadcast_programming(pp)
+                if (
+                    supports_illuminance
+                    or supports_motion
+                    or _has_light_level_broadcast_programming(light_level_broadcast)
+                ):
                     units.append(
                         {
                             "address": unit_address,
@@ -352,6 +546,7 @@ def _parse_xml(raw: bytes) -> dict[str, Any]:
                             "_pir_light_movement": _first(pp.get("PIRLightMovement")),
                             "_pir_dark_movement": _first(pp.get("PIRDarkMovement")),
                             "_second_application_blocks": _first(pp.get("SecondApplicationBlocks")),
+                            "_light_level_broadcast": light_level_broadcast,
                         }
                     )
 
@@ -532,9 +727,20 @@ def _parse_sqlite_connection(connection: sqlite3.Connection) -> dict[str, Any]:
 
             unit_address = _safe_int(unit_row["address"], -1)
             if 0 <= unit_address <= 255:
-                supports_illuminance = unit_type in ILLUMINANCE_UNIT_TYPES or catalog in ILLUMINANCE_CATALOG_NUMBERS
-                supports_motion = unit_type in MOTION_UNIT_TYPES or catalog in MOTION_CATALOG_NUMBERS
-                if supports_illuminance or supports_motion:
+                supports_illuminance = (
+                    unit_type in ILLUMINANCE_UNIT_TYPES
+                    or catalog in ILLUMINANCE_CATALOG_NUMBERS
+                )
+                supports_motion = (
+                    unit_type in MOTION_UNIT_TYPES
+                    or catalog in MOTION_CATALOG_NUMBERS
+                )
+                light_level_broadcast = _light_level_broadcast_programming(properties)
+                if (
+                    supports_illuminance
+                    or supports_motion
+                    or _has_light_level_broadcast_programming(light_level_broadcast)
+                ):
                     units.append(
                         {
                             "address": unit_address,
@@ -549,6 +755,7 @@ def _parse_sqlite_connection(connection: sqlite3.Connection) -> dict[str, Any]:
                             "_pir_light_movement": _first(properties.get("PIRLightMovement")),
                             "_pir_dark_movement": _first(properties.get("PIRDarkMovement")),
                             "_second_application_blocks": _first(properties.get("SecondApplicationBlocks")),
+                            "_light_level_broadcast": light_level_broadcast,
                         }
                     )
 
@@ -669,11 +876,25 @@ def _finish_units(units: list[dict[str, Any]], applications: list[dict[str, Any]
             if unit.get("supports_motion")
             else []
         )
+        unit["light_level_broadcast_groups"] = (
+            _resolve_light_level_broadcast_groups(unit, group_lookup)
+            if unit.get("supports_illuminance")
+            or _has_light_level_broadcast_programming(
+                unit.get("_light_level_broadcast", {})
+            )
+            else []
+        )
+        for reference in unit["light_level_broadcast_groups"]:
+            group = group_lookup[(reference["application"], reference["group"])]
+            group["light_level_broadcast"] = True
+            group["lux_per_level"] = LIGHT_LEVEL_BROADCAST_LUX_PER_LEVEL
+            group["suggested_platform"] = "sensor"
         unit.pop("_applications", None)
         unit.pop("_group_addresses", None)
         unit.pop("_pir_light_movement", None)
         unit.pop("_pir_dark_movement", None)
         unit.pop("_second_application_blocks", None)
+        unit.pop("_light_level_broadcast", None)
 
 
 def project_summary(project: dict[str, Any]) -> str:

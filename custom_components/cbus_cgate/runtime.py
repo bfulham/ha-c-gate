@@ -45,11 +45,10 @@ from .const import (
     DEFAULT_RECONNECT_MAX,
     DEFAULT_RECONNECT_MIN,
     EVENT_CBUS,
-    TYPE_AUTO,
     TYPE_IGNORE,
 )
 
-from .project import classify_group
+from .project import effective_group_platform
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -489,17 +488,11 @@ class CbusCgateRuntime:
         )
 
     def effective_entity_type(self, key: GroupKey, group: dict[str, Any]) -> str:
-        override = self.group_overrides.get(f"{key[0]}:{key[1]}:{key[2]}")
-        if override:
-            return override
-        mapping = self.effective_application_type(key[0], key[1])
-        if mapping == TYPE_AUTO:
-            return classify_group(
-                group["name"],
-                bool(group.get("relay")),
-                bool(group.get("output_assigned")),
-            )
-        return mapping
+        return effective_group_platform(
+            group,
+            self.effective_application_type(key[0], key[1]),
+            self.group_overrides.get(f"{key[0]}:{key[1]}:{key[2]}"),
+        )
 
     async def start(self) -> None:
         connections = self._hub_connections()

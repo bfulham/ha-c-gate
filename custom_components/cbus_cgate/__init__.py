@@ -51,6 +51,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
     _cleanup_legacy_registry_entries(hass, entry, runtime)
+    _cleanup_changed_group_domains(hass, entry, runtime)
 
     try:
         await runtime.start()
@@ -98,6 +99,35 @@ def _cleanup_legacy_registry_entries(
             for identifier in identifiers
         ):
             device_registry.async_remove_device(device_entry.id)
+
+
+def _cleanup_changed_group_domains(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    runtime: CbusCgateRuntime,
+) -> None:
+    """Remove stale registry entries when a group changes entity domain.
+
+    Home Assistant keys entity-registry entries by entity domain as well as
+    integration platform and unique ID. A group changing from ``light`` to
+    ``sensor`` therefore leaves the old light entry behind unless the
+    integration removes it before the new platform is set up.
+    """
+    expected_domains = {
+        (
+            f"{runtime.installation_id}:n{definition.network['address']}:"
+            f"a{definition.application['address']}:g{definition.group['address']}"
+        ): definition.entity_type
+        for definition in runtime.group_definitions
+    }
+    entity_registry = er.async_get(hass)
+    for entity_entry in er.async_entries_for_config_entry(
+        entity_registry, entry.entry_id
+    ):
+        expected_domain = expected_domains.get(entity_entry.unique_id)
+        if expected_domain is None or entity_entry.domain == expected_domain:
+            continue
+        entity_registry.async_remove(entity_entry.entity_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

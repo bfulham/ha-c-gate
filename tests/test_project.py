@@ -6,7 +6,7 @@ import sqlite3
 from pathlib import Path
 import zipfile
 
-from project import classify_group, parse_project_path
+from project import classify_group, parse_project_bytes, parse_project_path
 
 
 XML = b"""<?xml version='1.0'?>
@@ -77,3 +77,10 @@ def test_group_classification_uses_groups_for_sensor_values() -> None:
     assert classify_group("Hall Motion", relay=False, output_assigned=False) == "binary_sensor"
     assert classify_group("Hall Light Level", relay=False, output_assigned=False) == "sensor"
     assert classify_group("Hall Light Level", relay=False, output_assigned=True) == "light"
+
+
+def test_parse_project_bytes_from_cgate_xml() -> None:
+    project = parse_project_bytes(XML, "TEST.xml (fetched from C-Gate)", "xml")
+    assert project["project_name"] == "TEST"
+    assert project["source_name"] == "TEST.xml (fetched from C-Gate)"
+    assert project["source_format"] == "xml"

@@ -4,9 +4,10 @@ A native Home Assistant integration for Clipsal/Schneider Electric C-Bus install
 
 It is designed to work with the companion C-Gate Server Home Assistant app or an existing C-Gate installation. It does not use MQTT and it never opens a CNI directly.
 
-## v0.2.0 features
+## v0.3.0 features
 
-- Imports legacy Toolkit `.cbz`/`.xml` projects and modern C-Gate 3 `.cbz`/`.db` projects during setup.
+- Fetches the project currently loaded by C-Gate directly over the command port using `DBGETXML`; no Toolkit backup upload is required.
+- Manual import of legacy Toolkit `.cbz`/`.xml` projects and modern C-Gate 3 `.cbz`/`.db` projects remains available as a fallback.
 - Setup validates C-Gate but can continue while C-Gate is offline.
 - One Home Assistant hub device per imported C-Bus network/CNI.
 - One Home Assistant child device per populated C-Bus application beneath its network hub.
@@ -17,7 +18,7 @@ It is designed to work with the companion C-Gate Server Home Assistant app or an
 - Up to eight persistent command sessions for fast parallel actions.
 - Status Change Port push updates with an automatic command-port event fallback when port 20025 is disabled.
 - Optimistic UI state followed by authoritative C-Gate status reconciliation.
-- Project replacement through **Reconfigure**, preserving address-based unique IDs.
+- Project replacement through **Reconfigure**, either by fetching the latest project from C-Gate or uploading a file, while preserving address-based unique IDs.
 - Lights, switches, binary sensors, numeric group sensors, covers, and Measurement Application sensors.
 - Reopen-network and resynchronise buttons per hub.
 - Diagnostics and automatic reconnects.
@@ -46,22 +47,34 @@ When upgrading from v0.1.0, the obsolete physical-unit motion entities and the o
 3. Install **C-Bus C-Gate**.
 4. Restart Home Assistant.
 5. Open **Settings → Devices & services → Add integration → C-Bus C-Gate**.
-6. Upload the Toolkit project backup.
+6. Choose **Fetch from C-Gate**, then enter the project name and the Home Assistant host/IP running the C-Gate Server add-on.
 
 Manual installation is also possible by copying `custom_components/cbus_cgate` into `/config/custom_components`.
 
 ## Initial setup
 
-1. Upload a Toolkit project:
-   - Toolkit 1.16 and earlier: CBZ containing XML.
-   - Toolkit 1.17 and later/C-Gate 3: CBZ containing a SQLite DB.
-   - Raw `.xml` and `.db` files are also accepted.
-2. Enter the C-Gate server address and ports.
-3. The integration attempts `NOOP`, `PROJECT USE`, and a project-state read.
-4. If validation fails, choose **Continue without a working connection**. The integration will load and retry in the background.
-5. Finish setup, then use **Configure → Application mappings** to change imported applications.
+### Fetch from the C-Gate Server add-on
 
-The default endpoint is applied to every hub. Configure an individual hub to point it at another C-Gate server or use different ports.
+1. Make sure the Toolkit project has already been uploaded to and loaded by the C-Gate Server add-on.
+2. Add the integration and choose **Fetch from C-Gate**.
+3. Enter:
+   - **C-Gate project name**: the exact project name shown by the add-on, such as `THEBEND`.
+   - **C-Gate host**: the host name or IP address of the Home Assistant system running the add-on. `homeassistant.local` is the default.
+   - **Command port**: `20023` unless the add-on port mapping was changed.
+4. The integration runs `NOOP`, `PROJECT USE <name>`, and `DBGETXML //<name>/`, then parses the returned XML locally.
+5. Confirm the imported project and finish setup.
+
+The fetched endpoint is applied to every imported hub initially. Configure an individual hub later to point it at another C-Gate server or use different ports.
+
+### Manual upload fallback
+
+Choose **Upload a project file** when C-Gate is offline or not reachable during setup. Supported files are:
+
+- Toolkit 1.16 and earlier: CBZ containing XML.
+- Toolkit 1.17 and later/C-Gate 3: CBZ containing a SQLite DB.
+- Raw `.xml` and `.db` files.
+
+After upload, enter the C-Gate endpoint. If validation fails, setup can continue offline and the integration will reconnect in the background.
 
 ## Application mapping
 
@@ -89,7 +102,7 @@ Mappings may be changed per network/application. Any individual group can then b
 
 ## C-Gate requirements
 
-The C-Gate project must exist on the selected C-Gate server and its project name must match the uploaded Toolkit project.
+The C-Gate project must exist on the selected C-Gate server. Direct fetch requires **Program** access because it uses `DBGETXML`; normal runtime control requires **Operate** or **Program** access.
 
 The integration uses:
 
@@ -110,17 +123,18 @@ The default pool contains four command sessions. Increase it carefully under **C
 
 ## Updating the Toolkit project
 
-Open the integration menu and select **Reconfigure**, then upload the updated CBZ/DB/XML project. The integration previews additions, removals, renames, and connection-definition changes.
+Open the integration menu and select **Reconfigure**. Choose **Fetch latest project from C-Gate** to import the currently loaded database without handling a backup file, or choose manual upload. The integration previews additions, removals, renames, and connection-definition changes.
 
 Entity unique IDs are based on a generated installation ID plus numeric C-Bus addresses, never group names. Renaming a group therefore preserves automations and history.
 
 ## Current limitations
 
-- v0.2.0 maps common group-oriented applications and Measurement Application events. It does not yet implement native HVAC, Trigger Control, Enable Control selectors, scenes, or every specialised C-Bus application.
+- v0.3.0 maps common group-oriented applications and Measurement Application events. It does not yet implement native HVAC, Trigger Control, Enable Control selectors, scenes, or every specialised C-Bus application.
 - Covers are represented as one 0–255 position group. Paired up/down relay covers need a future composite-device mapping.
 - Physical Unit Parameter polling is intentionally not used. Group-based light-level values are exposed as percentages, while dedicated Measurement Application illuminance channels retain their real lux units.
 - A C-Gate project can contain networks that are offline or use serial interfaces unavailable to the C-Gate host; those hubs remain unavailable without blocking other hubs.
-- This release has been parser/protocol tested against the supplied THEBEND Toolkit projects and C-Gate 3.7.1 locally, but live field testing is still required.
+- Direct `DBGETXML` fetch currently imports XML applications, groups, units, and programming properties. Measurement Application device/channel definitions from a modern SQLite Toolkit database still require the manual CBZ/DB import path.
+- The included parser and mocked C-Gate protocol tests pass; live validation against the add-on and a real C-Gate project is still required.
 
 ## Debug logging
 

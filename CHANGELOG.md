@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+
+- Added direct Toolkit project import from a running C-Gate server using the `DBGETXML` command.
+- Added a setup menu with **Fetch from C-Gate** as the primary path and manual CBZ/DB/XML upload as a fallback.
+- Added **Reconfigure → Fetch latest project from C-Gate** so project changes can be imported without downloading and uploading a Toolkit backup.
+- Reused the fetched C-Gate endpoint as the initial runtime connection for every imported network.
+- Added strict project-name validation, a 64 MiB XML safety limit, and complete-snippet validation.
+- Prevented reconfigure from accidentally replacing an entry with a different C-Bus project.
+
 ## 0.2.0
 
 - Changed the Home Assistant device hierarchy to create one child device per populated C-Bus application.

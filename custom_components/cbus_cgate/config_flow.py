@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -26,7 +27,12 @@ from homeassistant.helpers.selector import (
     TextSelectorType,
 )
 
-from .client import CgateEndpoint, async_validate_endpoint
+from .client import (
+    CgateEndpoint,
+    CgateError,
+    async_fetch_project_xml,
+    async_validate_endpoint,
+)
 from .const import (
     CONF_APPLICATION,
     CONF_APPLICATION_MAPPINGS,
@@ -65,8 +71,61 @@ from .const import (
     DOMAIN,
     ENTITY_TYPES,
 )
-from .project import ProjectError, parse_project_path, project_diff, project_summary
+from .project import (
+    ProjectError,
+    parse_project_bytes,
+    parse_project_path,
+    project_diff,
+    project_summary,
+)
 from .storage import async_load_project, async_save_project
+
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def _connection_from_input(user_input: dict[str, Any]) -> dict[str, Any]:
+    """Normalise common C-Gate endpoint fields from a flow form."""
+    return {
+        CONF_HOST: str(user_input[CONF_HOST]).strip(),
+        CONF_COMMAND_PORT: int(user_input[CONF_COMMAND_PORT]),
+        CONF_EVENT_PORT: int(user_input[CONF_EVENT_PORT]),
+        CONF_STATUS_PORT: int(user_input[CONF_STATUS_PORT]),
+        CONF_CONFIG_PORT: int(user_input[CONF_CONFIG_PORT]),
+        CONF_AUTO_OPEN: bool(user_input[CONF_AUTO_OPEN]),
+    }
+
+
+def _connection_schema(defaults: dict[str, Any], *, include_project: bool = False) -> vol.Schema:
+    """Build the shared C-Gate connection form schema."""
+    fields: dict[vol.Marker, Any] = {}
+    if include_project:
+        fields[vol.Required(CONF_PROJECT_NAME, default=defaults.get(CONF_PROJECT_NAME, ""))] = (
+            TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT))
+        )
+    fields.update(
+        {
+            vol.Required(CONF_HOST, default=defaults[CONF_HOST]): TextSelector(
+                TextSelectorConfig(type=TextSelectorType.TEXT)
+            ),
+            vol.Required(
+                CONF_COMMAND_PORT, default=defaults[CONF_COMMAND_PORT]
+            ): _port_selector(DEFAULT_COMMAND_PORT),
+            vol.Required(
+                CONF_EVENT_PORT, default=defaults[CONF_EVENT_PORT]
+            ): _port_selector(DEFAULT_EVENT_PORT),
+            vol.Required(
+                CONF_STATUS_PORT, default=defaults[CONF_STATUS_PORT]
+            ): _port_selector(DEFAULT_STATUS_PORT),
+            vol.Required(
+                CONF_CONFIG_PORT, default=defaults[CONF_CONFIG_PORT]
+            ): _port_selector(DEFAULT_CONFIG_PORT),
+            vol.Required(
+                CONF_AUTO_OPEN, default=defaults[CONF_AUTO_OPEN]
+            ): BooleanSelector(),
+        }
+    )
+    return vol.Schema(fields)
 
 
 def _entity_type_selector() -> SelectSelector:
@@ -106,8 +165,68 @@ class CbusCgateConfigFlow(ConfigFlow, domain=DOMAIN):
         with process_uploaded_file(self.hass, upload_id) as file_path:
             return parse_project_path(Path(file_path))
 
-    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Import the Toolkit project."""
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Choose whether to fetch the project from C-Gate or upload it."""
+        return self.async_show_menu(
+            step_id="user",
+            menu_options=["fetch_project", "upload_project"],
+        )
+
+    async def async_step_fetch_project(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Fetch and import the loaded Toolkit project from C-Gate."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            project_name = str(user_input[CONF_PROJECT_NAME]).strip()
+            self._connection = _connection_from_input(user_input)
+            endpoint = CgateEndpoint(
+                host=self._connection[CONF_HOST],
+                command_port=self._connection[CONF_COMMAND_PORT],
+                event_port=self._connection[CONF_EVENT_PORT],
+                status_port=self._connection[CONF_STATUS_PORT],
+                config_port=self._connection[CONF_CONFIG_PORT],
+                project=project_name,
+            )
+            try:
+                raw = await async_fetch_project_xml(endpoint)
+                self._project = await self.hass.async_add_executor_job(
+                    parse_project_bytes,
+                    raw,
+                    f"{project_name}.xml (fetched from C-Gate)",
+                    "xml",
+                )
+            except CgateError as err:
+                _LOGGER.warning("Unable to fetch Toolkit project from C-Gate: %s", err)
+                errors["base"] = "cannot_fetch_project"
+            except (OSError, ProjectError, ValueError) as err:
+                _LOGGER.warning("C-Gate returned an invalid Toolkit project: %s", err)
+                errors["base"] = "invalid_fetched_project"
+            else:
+                return await self.async_step_confirm()
+
+        defaults = {
+            CONF_PROJECT_NAME: "",
+            CONF_HOST: DEFAULT_HOST,
+            CONF_COMMAND_PORT: DEFAULT_COMMAND_PORT,
+            CONF_EVENT_PORT: DEFAULT_EVENT_PORT,
+            CONF_STATUS_PORT: DEFAULT_STATUS_PORT,
+            CONF_CONFIG_PORT: DEFAULT_CONFIG_PORT,
+            CONF_AUTO_OPEN: DEFAULT_AUTO_OPEN,
+            **self._connection,
+        }
+        return self.async_show_form(
+            step_id="fetch_project",
+            data_schema=_connection_schema(defaults, include_project=True),
+            errors=errors,
+        )
+
+    async def async_step_upload_project(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Import a Toolkit project from an uploaded file."""
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
@@ -119,7 +238,7 @@ class CbusCgateConfigFlow(ConfigFlow, domain=DOMAIN):
             else:
                 return await self.async_step_connection()
         return self.async_show_form(
-            step_id="user",
+            step_id="upload_project",
             data_schema=vol.Schema(
                 {
                     vol.Required(CONF_PROJECT_FILE): FileSelector(
@@ -138,14 +257,7 @@ class CbusCgateConfigFlow(ConfigFlow, domain=DOMAIN):
         """Configure and validate the default C-Gate endpoint."""
         assert self._project is not None
         if user_input is not None:
-            self._connection = {
-                CONF_HOST: str(user_input[CONF_HOST]).strip(),
-                CONF_COMMAND_PORT: int(user_input[CONF_COMMAND_PORT]),
-                CONF_EVENT_PORT: int(user_input[CONF_EVENT_PORT]),
-                CONF_STATUS_PORT: int(user_input[CONF_STATUS_PORT]),
-                CONF_CONFIG_PORT: int(user_input[CONF_CONFIG_PORT]),
-                CONF_AUTO_OPEN: bool(user_input[CONF_AUTO_OPEN]),
-            }
+            self._connection = _connection_from_input(user_input)
             endpoint = CgateEndpoint(
                 host=self._connection[CONF_HOST],
                 command_port=self._connection[CONF_COMMAND_PORT],
@@ -170,28 +282,7 @@ class CbusCgateConfigFlow(ConfigFlow, domain=DOMAIN):
         }
         return self.async_show_form(
             step_id="connection",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_HOST, default=defaults[CONF_HOST]): TextSelector(
-                        TextSelectorConfig(type=TextSelectorType.TEXT)
-                    ),
-                    vol.Required(
-                        CONF_COMMAND_PORT, default=defaults[CONF_COMMAND_PORT]
-                    ): _port_selector(DEFAULT_COMMAND_PORT),
-                    vol.Required(
-                        CONF_EVENT_PORT, default=defaults[CONF_EVENT_PORT]
-                    ): _port_selector(DEFAULT_EVENT_PORT),
-                    vol.Required(
-                        CONF_STATUS_PORT, default=defaults[CONF_STATUS_PORT]
-                    ): _port_selector(DEFAULT_STATUS_PORT),
-                    vol.Required(
-                        CONF_CONFIG_PORT, default=defaults[CONF_CONFIG_PORT]
-                    ): _port_selector(DEFAULT_CONFIG_PORT),
-                    vol.Required(
-                        CONF_AUTO_OPEN, default=defaults[CONF_AUTO_OPEN]
-                    ): BooleanSelector(),
-                }
-            ),
+            data_schema=_connection_schema(defaults),
             description_placeholders={"project_summary": project_summary(self._project)},
         )
 
@@ -261,6 +352,87 @@ class CbusCgateConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        """Choose how to update the stored Toolkit project."""
+        entry = self._get_reconfigure_entry()
+        if self._old_project is None:
+            self._old_project = await async_load_project(
+                self.hass, entry.data[CONF_PROJECT_KEY]
+            )
+        return self.async_show_menu(
+            step_id="reconfigure",
+            menu_options=["reconfigure_fetch", "reconfigure_upload"],
+        )
+
+    async def async_step_reconfigure_fetch(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Fetch the latest project database from the configured C-Gate server."""
+        errors: dict[str, str] = {}
+        entry = self._get_reconfigure_entry()
+        if self._old_project is None:
+            self._old_project = await async_load_project(
+                self.hass, entry.data[CONF_PROJECT_KEY]
+            )
+        assert self._old_project is not None
+
+        hubs = entry.data.get(CONF_HUB_CONNECTIONS, {})
+        fallback = next(iter(hubs.values()), {})
+        defaults = {
+            CONF_PROJECT_NAME: entry.data[CONF_PROJECT_NAME],
+            CONF_HOST: fallback.get(CONF_HOST, DEFAULT_HOST),
+            CONF_COMMAND_PORT: fallback.get(CONF_COMMAND_PORT, DEFAULT_COMMAND_PORT),
+            CONF_EVENT_PORT: fallback.get(CONF_EVENT_PORT, DEFAULT_EVENT_PORT),
+            CONF_STATUS_PORT: fallback.get(CONF_STATUS_PORT, DEFAULT_STATUS_PORT),
+            CONF_CONFIG_PORT: fallback.get(CONF_CONFIG_PORT, DEFAULT_CONFIG_PORT),
+            CONF_AUTO_OPEN: fallback.get(CONF_AUTO_OPEN, DEFAULT_AUTO_OPEN),
+        }
+
+        if user_input is not None:
+            project_name = str(user_input[CONF_PROJECT_NAME]).strip()
+            connection = _connection_from_input(user_input)
+            endpoint = CgateEndpoint(
+                host=connection[CONF_HOST],
+                command_port=connection[CONF_COMMAND_PORT],
+                event_port=connection[CONF_EVENT_PORT],
+                status_port=connection[CONF_STATUS_PORT],
+                config_port=connection[CONF_CONFIG_PORT],
+                project=project_name,
+            )
+            try:
+                raw = await async_fetch_project_xml(endpoint)
+                project = await self.hass.async_add_executor_job(
+                    parse_project_bytes,
+                    raw,
+                    f"{project_name}.xml (fetched from C-Gate)",
+                    "xml",
+                )
+                self._validate_reconfigured_project(project)
+                self._project = project
+            except CgateError as err:
+                _LOGGER.warning("Unable to fetch Toolkit project from C-Gate: %s", err)
+                errors["base"] = "cannot_fetch_project"
+            except ProjectError as err:
+                _LOGGER.warning("C-Gate project update was rejected: %s", err)
+                errors["base"] = (
+                    "different_project"
+                    if "different C-Bus project" in str(err)
+                    else "invalid_fetched_project"
+                )
+            except (OSError, ValueError) as err:
+                _LOGGER.warning("C-Gate returned an invalid Toolkit project: %s", err)
+                errors["base"] = "invalid_fetched_project"
+            else:
+                return await self.async_step_reconfigure_confirm()
+
+        return self.async_show_form(
+            step_id="reconfigure_fetch",
+            data_schema=_connection_schema(defaults, include_project=True),
+            errors=errors,
+        )
+
+    async def async_step_reconfigure_upload(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Upload a replacement Toolkit project."""
         errors: dict[str, str] = {}
         entry = self._get_reconfigure_entry()
@@ -268,17 +440,26 @@ class CbusCgateConfigFlow(ConfigFlow, domain=DOMAIN):
             self._old_project = await async_load_project(
                 self.hass, entry.data[CONF_PROJECT_KEY]
             )
+        assert self._old_project is not None
         if user_input is not None:
             try:
-                self._project = await self.hass.async_add_executor_job(
+                project = await self.hass.async_add_executor_job(
                     self._parse_upload, user_input[CONF_PROJECT_FILE]
                 )
-            except (OSError, ProjectError, ValueError):
+                self._validate_reconfigured_project(project)
+                self._project = project
+            except ProjectError as err:
+                errors["base"] = (
+                    "different_project"
+                    if "different C-Bus project" in str(err)
+                    else "invalid_project"
+                )
+            except (OSError, ValueError):
                 errors["base"] = "invalid_project"
             else:
                 return await self.async_step_reconfigure_confirm()
         return self.async_show_form(
-            step_id="reconfigure",
+            step_id="reconfigure_upload",
             data_schema=vol.Schema(
                 {
                     vol.Required(CONF_PROJECT_FILE): FileSelector(
@@ -290,6 +471,12 @@ class CbusCgateConfigFlow(ConfigFlow, domain=DOMAIN):
             ),
             errors=errors,
         )
+
+    def _validate_reconfigured_project(self, project: dict[str, Any]) -> None:
+        """Prevent replacing an entry with a different C-Bus installation."""
+        assert self._old_project is not None
+        if project["project_id"].casefold() != self._old_project["project_id"].casefold():
+            raise ProjectError("The update belongs to a different C-Bus project")
 
     async def async_step_reconfigure_confirm(
         self, user_input: dict[str, Any] | None = None

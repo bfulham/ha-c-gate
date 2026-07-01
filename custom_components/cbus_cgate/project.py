@@ -237,19 +237,27 @@ def _extract_payload(path: Path) -> ProjectPayload:
         return ProjectPayload(raw, candidate.filename, fmt)
 
 
-def parse_project_path(path: Path) -> dict[str, Any]:
-    """Parse a Toolkit project into a compact versioned model."""
-    payload = _extract_payload(path)
-    digest = hashlib.sha256(payload.content).hexdigest()
-    if payload.format == "sqlite":
-        project = _parse_sqlite(payload.content)
-    else:
-        project = _parse_xml(payload.content)
+def parse_project_bytes(
+    raw: bytes,
+    source_name: str = "project.xml",
+    source_format: str | None = None,
+) -> dict[str, Any]:
+    """Parse raw Toolkit project bytes into a compact versioned model."""
+    if len(raw) > MAX_EXPANDED_BYTES:
+        raise ProjectError("Project data is too large")
+    detected_format = source_format or (
+        "sqlite" if raw.startswith(b"SQLite format 3\x00") else "xml"
+    )
+    if detected_format not in {"sqlite", "xml"}:
+        raise ProjectError(f"Unsupported Toolkit project format: {detected_format}")
+
+    digest = hashlib.sha256(raw).hexdigest()
+    project = _parse_sqlite(raw) if detected_format == "sqlite" else _parse_xml(raw)
     project.update(
         {
             "schema_version": 1,
-            "source_name": payload.source_name,
-            "source_format": payload.format,
+            "source_name": source_name,
+            "source_format": detected_format,
             "source_sha256": digest,
         }
     )
@@ -264,6 +272,12 @@ def parse_project_path(path: Path) -> dict[str, Any]:
         )
     }
     return project
+
+
+def parse_project_path(path: Path) -> dict[str, Any]:
+    """Parse a Toolkit project file into a compact versioned model."""
+    payload = _extract_payload(path)
+    return parse_project_bytes(payload.content, payload.source_name, payload.format)
 
 
 def _parse_xml(raw: bytes) -> dict[str, Any]:

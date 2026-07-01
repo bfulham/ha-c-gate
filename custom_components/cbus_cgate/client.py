@@ -21,6 +21,11 @@ _RESPONSE_RE = re.compile(r"^(\d{3})([- ])?(.*)$")
 _LEVEL_RE = re.compile(r"\blevel=(\d+)\b", re.IGNORECASE)
 _STATE_RE = re.compile(r"\bstate=([^\s]+)", re.IGNORECASE)
 _SOURCE_RE = re.compile(r"#sourceunit=(\d+)", re.IGNORECASE)
+_PROJECT_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+_XML_FRAGMENT_RE = re.compile(r"^(?:\[\d+\]\s+)?347-(.*)$")
+_XML_BEGIN_RE = re.compile(r"^(?:\[\d+\]\s+)?343-Begin XML snippet$")
+_XML_END_RE = re.compile(r"^(?:\[\d+\]\s+)?344(?:\s+.*)?$")
+_MAX_PROJECT_XML_BYTES = 64 * 1024 * 1024
 
 # Examples accepted:
 # lighting on //PROJECT/253/62/93 #sourceunit=21
@@ -158,9 +163,14 @@ class CommandConnection:
                     if code >= 400:
                         raise CgateCommandError(code, match.group(3).strip(), command)
                     return CommandResult(command, code, lines)
-            except (OSError, asyncio.TimeoutError, CgateConnectionError):
+            except CgateConnectionError:
                 await self.close()
                 raise
+            except (OSError, asyncio.TimeoutError) as err:
+                await self.close()
+                raise CgateConnectionError(
+                    f"C-Gate command connection failed while running {command}: {err}"
+                ) from err
 
 
 class CommandPool:
@@ -269,6 +279,54 @@ def parse_status_line(text: str) -> StatusEvent | None:
             raw=cleaned,
         )
     return None
+
+
+def extract_dbgetxml(result: CommandResult) -> bytes:
+    """Extract and validate XML returned by C-Gate's DBGETXML command."""
+    started = False
+    ended = False
+    fragments: list[str] = []
+    total_bytes = 0
+
+    for line in result.lines:
+        if _XML_BEGIN_RE.match(line):
+            started = True
+            continue
+        if _XML_END_RE.match(line):
+            ended = True
+            break
+        fragment = _XML_FRAGMENT_RE.match(line)
+        if fragment is None:
+            continue
+        if not started:
+            raise CgateConnectionError("C-Gate sent project XML before the snippet header")
+        content = fragment.group(1)
+        total_bytes += len(content.encode("utf-8"))
+        if total_bytes > _MAX_PROJECT_XML_BYTES:
+            raise CgateConnectionError("C-Gate project XML exceeds the 64 MiB safety limit")
+        fragments.append(content)
+
+    if not started or not ended or not fragments:
+        raise CgateConnectionError("C-Gate did not return a complete project XML snippet")
+    return "".join(fragments).encode("utf-8")
+
+
+async def async_fetch_project_xml(endpoint: CgateEndpoint) -> bytes:
+    """Fetch the loaded Toolkit project from C-Gate using DBGETXML."""
+    if not _PROJECT_NAME_RE.fullmatch(endpoint.project):
+        raise CgateConnectionError(
+            "Project names may contain only letters, numbers, dots, underscores, and hyphens"
+        )
+
+    connection = CommandConnection(endpoint, timeout=60)
+    try:
+        await connection.connect()
+        await connection.execute("NOOP")
+        await connection.execute(f"PROJECT USE {endpoint.project}")
+        result = await connection.execute(f"DBGETXML //{endpoint.project}/")
+        return extract_dbgetxml(result)
+    finally:
+        await connection.close()
 
 
 async def async_validate_endpoint(endpoint: CgateEndpoint) -> tuple[bool, str | None]:

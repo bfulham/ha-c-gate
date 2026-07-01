@@ -1,0 +1,209 @@
+{
+  "title": "C-Bus C-Gate",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Import C-Bus Toolkit project",
+        "description": "Automatically use a running C-Gate Server add-on, connect to another C-Gate server, or upload a Toolkit backup manually.",
+        "menu_options": {
+          "addon_project": "Use detected C-Gate add-on",
+          "fetch_project": "Fetch from another C-Gate server",
+          "upload_project": "Upload a project file"
+        }
+      },
+      "connection": {
+        "title": "C-Gate connection",
+        "description": "These settings are applied to every imported hub initially. Each hub can be changed independently after setup.\n\n{project_summary}",
+        "data": {
+          "host": "C-Gate host",
+          "command_port": "Command port",
+          "event_port": "Event port",
+          "status_port": "Status Change port (0 uses command fallback)",
+          "config_port": "Config Change port",
+          "auto_open": "Open C-Bus networks automatically"
+        }
+      },
+      "connection_failed": {
+        "title": "C-Gate validation failed",
+        "description": "The project was imported successfully, but the connection test failed:\n\n{connection_error}\n\nYou can continue and the integration will reconnect in the background.",
+        "data": {
+          "continue_offline": "Continue without a working connection"
+        }
+      },
+      "confirm": {
+        "title": "Confirm C-Bus project",
+        "description": "{summary}\n\nInitial C-Gate endpoint: **{connection}**\n\nApplication mappings can be changed from Configure after setup.",
+        "data": {}
+      },
+      "reconfigure": {
+        "title": "Update Toolkit project",
+        "description": "Automatically fetch from a running C-Gate Server add-on, connect to another C-Gate server, or upload a replacement file. Address-based entity IDs are preserved.",
+        "menu_options": {
+          "reconfigure_addon": "Fetch from detected C-Gate add-on",
+          "reconfigure_fetch": "Fetch latest project from another C-Gate server",
+          "reconfigure_upload": "Upload a project file"
+        }
+      },
+      "reconfigure_confirm": {
+        "title": "Apply project update",
+        "description": "{summary}",
+        "data": {}
+      },
+      "fetch_project": {
+        "title": "Fetch project from C-Gate",
+        "description": "Connect to the C-Gate Server add-on command port and import the loaded Toolkit project using DBGETXML. Use the host name or IP address of the Home Assistant system running the add-on.",
+        "data": {
+          "project_name": "C-Gate project name",
+          "host": "C-Gate host",
+          "command_port": "Command port",
+          "event_port": "Event port",
+          "status_port": "Status Change port (0 uses command fallback)",
+          "config_port": "Config Change port",
+          "auto_open": "Open C-Bus networks automatically"
+        }
+      },
+      "upload_project": {
+        "title": "Upload Toolkit project",
+        "description": "Upload a Toolkit CBZ, C-Gate DB, or legacy XML project. The file is parsed locally and setup can continue even while C-Gate is offline.",
+        "data": {
+          "project_file": "Toolkit project"
+        }
+      },
+      "reconfigure_fetch": {
+        "title": "Fetch latest project from C-Gate",
+        "description": "Fetch and compare the project currently loaded by C-Gate. The configured project name and first hub endpoint are pre-filled.",
+        "data": {
+          "project_name": "C-Gate project name",
+          "host": "C-Gate host",
+          "command_port": "Command port",
+          "event_port": "Event port",
+          "status_port": "Status Change port (0 uses command fallback)",
+          "config_port": "Config Change port",
+          "auto_open": "Open C-Bus networks automatically"
+        }
+      },
+      "reconfigure_upload": {
+        "title": "Upload updated Toolkit project",
+        "description": "Upload a newer CBZ, DB, or XML project. Address-based entity IDs are preserved.",
+        "data": {
+          "project_file": "Updated Toolkit project"
+        }
+      },
+      "addon_project": {
+        "title": "Use detected C-Gate add-on",
+        "description": "Home Assistant found {addon_count} running C-Gate Server add-on(s). The add-on internal hostname and standard ports are configured automatically. Confirm the add-on and Toolkit project name.",
+        "data": {
+          "addon_slug": "C-Gate add-on",
+          "project_name": "C-Gate project name"
+        }
+      },
+      "reconfigure_addon": {
+        "title": "Fetch from detected C-Gate add-on",
+        "description": "Home Assistant found {addon_count} running C-Gate Server add-on(s). The selected add-on becomes the C-Gate endpoint for every imported hub after the update.",
+        "data": {
+          "addon_slug": "C-Gate add-on",
+          "project_name": "C-Gate project name"
+        }
+      }
+    },
+    "error": {
+      "invalid_project": "The uploaded file is not a valid supported C-Bus Toolkit project",
+      "cannot_fetch_project": "Unable to fetch the project from C-Gate. Check the host, command port, project name, and the add-on integration_clients access list.",
+      "invalid_fetched_project": "C-Gate returned project XML that could not be parsed as a supported Toolkit project.",
+      "different_project": "The selected update belongs to a different C-Bus project.",
+      "addon_not_available": "The selected C-Gate add-on is no longer running or available.",
+      "project_required": "Enter the Toolkit project name loaded by C-Gate."
+    },
+    "abort": {
+      "already_configured": "This C-Bus project is already configured",
+      "reconfigure_successful": "The Toolkit project was updated",
+      "addon_not_found": "No running C-Gate Server add-on was detected. Start the add-on or use the manual C-Gate connection option."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "C-Bus C-Gate settings",
+        "description": "Choose which part of the integration to configure.",
+        "menu_options": {
+          "connections": "Hub connections",
+          "applications": "Application mappings",
+          "groups": "Group overrides",
+          "performance": "Performance and discovery"
+        }
+      },
+      "connections": {
+        "title": "Hub connections",
+        "description": "Choose a CNI/network hub to edit.",
+        "data": {
+          "network": "Hub"
+        }
+      },
+      "connection": {
+        "title": "Edit hub C-Gate endpoint",
+        "data": {
+          "enabled": "Enable hub",
+          "host": "C-Gate host",
+          "command_port": "Command port",
+          "event_port": "Event port",
+          "status_port": "Status Change port (0 uses command fallback)",
+          "config_port": "Config Change port",
+          "auto_open": "Open this C-Bus network automatically"
+        }
+      },
+      "applications": {
+        "title": "Application mappings",
+        "description": "Choose a network application to map to a Home Assistant entity type. Each populated application is shown as its own Home Assistant device.",
+        "data": {
+          "application": "Application"
+        }
+      },
+      "application": {
+        "title": "Map application",
+        "data": {
+          "entity_type": "Entity type"
+        }
+      },
+      "group_application": {
+        "title": "Group overrides",
+        "description": "Choose the application containing the group.",
+        "data": {
+          "application": "Application"
+        }
+      },
+      "group": {
+        "title": "Choose group",
+        "data": {
+          "group": "Group"
+        }
+      },
+      "group_override": {
+        "title": "Override group entity type",
+        "data": {
+          "entity_type": "Entity type"
+        }
+      },
+      "performance": {
+        "title": "Performance and discovery",
+        "data": {
+          "command_pool_size": "Parallel C-Gate command sessions",
+          "optimistic": "Update Home Assistant state immediately after commands",
+          "include_internal": "Include generated/internal Toolkit groups"
+        }
+      }
+    }
+  },
+  "selector": {
+    "entity_type": {
+      "options": {
+        "auto": "Automatic (motion, light-level broadcast, relay, and dimmer inference)",
+        "light": "Light",
+        "switch": "Switch",
+        "binary_sensor": "Binary sensor",
+        "sensor": "Numeric sensor",
+        "cover": "Cover",
+        "ignore": "Ignore"
+      }
+    }
+  }
+}

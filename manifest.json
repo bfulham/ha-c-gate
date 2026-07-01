@@ -1,0 +1,64 @@
+"""Home Assistant C-Gate add-on discovery helpers."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+CGATE_ADDON_SLUG = "cgate_server"
+CGATE_ADDON_NAME = "C-Gate Server"
+_RUNNING_STATES = {"started", "startup"}
+
+
+@dataclass(slots=True, frozen=True)
+class DetectedCgateAddon:
+    """A running C-Gate add-on that can be used by the config flow."""
+
+    slug: str
+    name: str
+    host: str
+    project_name: str
+    state: str
+
+
+def _state_text(value: Any) -> str:
+    """Normalise Supervisor state strings and enum-like values."""
+    return str(value or "").rsplit(".", 1)[-1].casefold()
+
+
+def is_cgate_addon(slug: str, info: dict[str, Any]) -> bool:
+    """Return whether Supervisor metadata identifies the companion add-on."""
+    normalised_slug = slug.casefold()
+    name = str(info.get("name") or "").strip().casefold()
+    return (
+        normalised_slug == CGATE_ADDON_SLUG
+        or normalised_slug.endswith(f"_{CGATE_ADDON_SLUG}")
+        or name == CGATE_ADDON_NAME.casefold()
+    )
+
+
+def detect_cgate_addons(
+    addons_info: dict[str, dict[str, Any] | None],
+) -> list[DetectedCgateAddon]:
+    """Extract running C-Gate add-ons from Supervisor's add-on metadata."""
+    detected: list[DetectedCgateAddon] = []
+    for slug, info in addons_info.items():
+        if info is None or not is_cgate_addon(slug, info):
+            continue
+        state = _state_text(info.get("state"))
+        if state not in _RUNNING_STATES:
+            continue
+        options = info.get("options")
+        project_name = ""
+        if isinstance(options, dict):
+            project_name = str(options.get("project_name") or "").strip()
+        detected.append(
+            DetectedCgateAddon(
+                slug=slug,
+                name=str(info.get("name") or CGATE_ADDON_NAME).strip(),
+                host=slug.replace("_", "-"),
+                project_name=project_name,
+                state=state,
+            )
+        )
+    return sorted(detected, key=lambda addon: (addon.name.casefold(), addon.slug))

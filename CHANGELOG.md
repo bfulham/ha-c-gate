@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.4
+
+- Fixed group entities remaining `unknown` after Home Assistant or C-Gate starts when their C-Bus level had not changed since boot.
+- Added an initial C-Gate state synchronisation that requests a network state refresh, waits for the C-Gate object model to become ready, and reads the current level of every configured group.
+- Uses application-wide wildcard level reads where supported, with automatic fallback to individual group reads for C-Gate versions that reject wildcard queries.
+- Retries unresolved groups during the initial C-Gate network scan and continues retrying them during the normal connection health cycle instead of relying solely on future push events.
+- Starts the push status listener before initial level retrieval so physical changes that occur during startup are not missed.
+
 ## 0.4.3
 
 - Fixed detected add-on imports producing percentage sensors instead of lux sensors. The add-on path now downloads the add-on's real current CBZ backup from its built-in `/project/backup` endpoint instead of relying on `DBGETXML`, preserving the modern SQLite `BroadcastActive`, `BroadcastBlock`, and `GroupAddress` programming used by Light Level Broadcast.

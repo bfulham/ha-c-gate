@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-
 from client import (
     CgateConnectionError,
     CgateEndpoint,
@@ -14,6 +13,7 @@ from client import (
     MeasurementEvent,
     async_fetch_project_xml,
     extract_dbgetxml,
+    parse_group_levels,
     parse_level,
     parse_status_line,
 )
@@ -58,6 +58,42 @@ async def test_command_multiline_response() -> None:
     await connection.close()
     server.close()
     await server.wait_closed()
+
+
+def test_parse_wildcard_group_levels() -> None:
+    result = type(
+        "Result",
+        (),
+        {
+            "lines": [
+                "300-//TEST/254/56/1: level=0",
+                "300-//TEST/254/56/2: state=ok level=128",
+                "300 //TEST/254/56/3: level=255",
+            ]
+        },
+    )()
+    assert parse_group_levels(result) == {
+        (254, 56, 1): 0,
+        (254, 56, 2): 128,
+        (254, 56, 3): 255,
+    }
+
+
+def test_parse_wildcard_group_levels_accepts_short_addresses() -> None:
+    result = type(
+        "Result",
+        (),
+        {
+            "lines": [
+                "300-254/56/10: level=49",
+                "300 254/56/11 level=300",
+            ]
+        },
+    )()
+    assert parse_group_levels(result) == {
+        (254, 56, 10): 49,
+        (254, 56, 11): 255,
+    }
 
 
 def test_extract_dbgetxml() -> None:

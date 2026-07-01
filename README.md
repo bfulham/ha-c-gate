@@ -4,7 +4,7 @@ A native Home Assistant integration for Clipsal/Schneider Electric C-Bus install
 
 It is designed to work with the companion C-Gate Server Home Assistant add-on or an existing C-Gate installation. It does not use MQTT and it never opens a CNI directly.
 
-## v0.4.3 features
+## v0.4.4 features
 
 - Automatically detects a running **C-Gate Server** add-on on Home Assistant installations with Supervisor.
 - Uses the detected add-on's internal hostname, standard ports, and configured Toolkit project name, avoiding manual connection details.
@@ -16,6 +16,7 @@ It is designed to work with the companion C-Gate Server Home Assistant add-on or
 - Applies per-hub C-Gate host and command/event/status/config port overrides.
 - Supports per-application entity mapping and per-group overrides.
 - Uses direct C-Gate command and Status Change interfaces; no MQTT bridge.
+- Fetches the current level of every configured group during startup, so groups that have not changed since C-Gate or Home Assistant boot do not remain `unknown`.
 - Uses up to eight persistent command sessions for fast parallel actions.
 - Uses Status Change Port push updates with an automatic command-port event fallback when port 20025 is unavailable.
 - Provides optimistic UI state followed by authoritative C-Gate status reconciliation.
@@ -140,6 +141,18 @@ Home Assistant does not serialise platform actions (`PARALLEL_UPDATES = 0`). A b
 
 The default pool contains four command sessions. Increase it carefully under **Configure → Performance and discovery**. It is capped at eight.
 
+## Initial state synchronisation
+
+C-Gate push ports report changes as they occur, but they do not replay every existing group level when Home Assistant connects. The integration therefore performs an authoritative state fetch each time its C-Gate connection starts:
+
+1. it requests a network state refresh from C-Gate;
+2. it waits until each network's C-Gate object model is ready;
+3. it reads all group levels by application using a wildcard query where supported;
+4. it falls back to individual group reads on C-Gate versions that do not support wildcard reads;
+5. it retries unresolved groups while C-Gate completes its startup scan and again during the normal health cycle.
+
+This means a light, switch, cover, motion group, or numeric group should have its real state shortly after startup even when it has not produced a C-Bus event since boot.
+
 ## Updating the Toolkit project
 
 Open the integration menu and select **Reconfigure**. The available choices are:
@@ -150,7 +163,7 @@ Open the integration menu and select **Reconfigure**. The available choices are:
 
 Entity unique IDs use a generated installation ID plus numeric C-Bus addresses, never group names. Renaming a group therefore preserves automations and history.
 
-After installing v0.4.3, run **Reconfigure → Fetch from detected C-Gate add-on** once. This path now downloads the real CBZ/SQLite backup instead of importing `DBGETXML` output, so the `BroadcastActive`, `BroadcastBlock`, and `GroupAddress` properties required for lux detection are retained. On reload, the existing sensor entities update from `%` to `lx`; stale `light.*` registry entries are also removed automatically when a group previously used the light domain.
+When upgrading from v0.4.2 or earlier, run **Reconfigure → Fetch from detected C-Gate add-on** once. This path downloads the real CBZ/SQLite backup instead of importing `DBGETXML` output, so the `BroadcastActive`, `BroadcastBlock`, and `GroupAddress` properties required for lux detection are retained. On reload, the existing sensor entities update from `%` to `lx`; stale `light.*` registry entries are also removed automatically when a group previously used the light domain.
 
 ## Current limitations
 

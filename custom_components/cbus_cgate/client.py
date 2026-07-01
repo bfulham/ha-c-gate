@@ -9,16 +9,21 @@ Home Assistant service to execute concurrently.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
 import logging
 import re
-from typing import Any
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 
 _LOGGER = logging.getLogger(__name__)
 
 _RESPONSE_RE = re.compile(r"^(\d{3})([- ])?(.*)$")
 _LEVEL_RE = re.compile(r"\blevel=(\d+)\b", re.IGNORECASE)
+_GROUP_LEVEL_RE = re.compile(
+    r"(?://(?P<project>[^/\s:]+)/)?"
+    r"(?P<network>\d+)/(?P<application>\d+)/(?P<group>\d+)"
+    r"(?:\s|:).*?\blevel=(?P<level>\d+)\b",
+    re.IGNORECASE,
+)
 _STATE_RE = re.compile(r"\bstate=([^\s]+)", re.IGNORECASE)
 _SOURCE_RE = re.compile(r"#sourceunit=(\d+)", re.IGNORECASE)
 _PROJECT_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -115,7 +120,7 @@ class CommandConnection:
                 timeout=10,
             )
             greeting = await asyncio.wait_for(self._reader.readline(), timeout=10)
-        except (OSError, asyncio.TimeoutError) as err:
+        except (TimeoutError, OSError) as err:
             await self.close()
             raise CgateConnectionError(
                 f"Unable to connect to {self.endpoint.host}:{self.endpoint.command_port}: {err}"
@@ -166,7 +171,7 @@ class CommandConnection:
             except CgateConnectionError:
                 await self.close()
                 raise
-            except (OSError, asyncio.TimeoutError) as err:
+            except (TimeoutError, OSError) as err:
                 await self.close()
                 raise CgateConnectionError(
                     f"C-Gate command connection failed while running {command}: {err}"
@@ -339,7 +344,11 @@ async def async_validate_endpoint(endpoint: CgateEndpoint) -> tuple[bool, str | 
             await connection.execute(f"PROJECT USE {endpoint.project}")
             await connection.execute(f"GET //{endpoint.project} state")
         except CgateCommandError as err:
-            return False, f"C-Gate is reachable, but project {endpoint.project} was not ready: {err.message}"
+            return (
+                False,
+                "C-Gate is reachable, but project "
+                f"{endpoint.project} was not ready: {err.message}",
+            )
         return True, None
     except CgateError as err:
         return False, str(err)
@@ -354,6 +363,28 @@ def parse_level(result: CommandResult) -> int | None:
         if match:
             return max(0, min(255, int(match.group(1))))
     return None
+
+
+def parse_group_levels(result: CommandResult) -> dict[tuple[int, int, int], int]:
+    """Extract one or more addressed group levels from a C-Gate response.
+
+    C-Gate supports wildcard reads such as ``GET //PROJECT/254/56/* level``.
+    The response contains one addressed line per group, so parsing the address as
+    well as the level lets startup synchronisation populate an entire application
+    with a single command.
+    """
+    levels: dict[tuple[int, int, int], int] = {}
+    for line in result.lines:
+        match = _GROUP_LEVEL_RE.search(line)
+        if match is None:
+            continue
+        key = (
+            int(match.group("network")),
+            int(match.group("application")),
+            int(match.group("group")),
+        )
+        levels[key] = max(0, min(255, int(match.group("level"))))
+    return levels
 
 
 def parse_state(result: CommandResult) -> str | None:
@@ -394,7 +425,7 @@ class StatusStream:
                 )
                 self.using_fallback = False
                 return
-            except (OSError, asyncio.TimeoutError):
+            except (TimeoutError, OSError):
                 await self.close()
                 _LOGGER.debug(
                     "C-Gate status port %s:%s unavailable; using command-event fallback",
